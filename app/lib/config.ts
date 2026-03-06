@@ -1,6 +1,6 @@
 // Alpaca market-data proxy (snapshot, bars, search, etc.) — still routed
 // through the Next.js backend to keep API keys server-side.
-export const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:3001";
+export const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "https://cairo-production.up.railway.app";
 
 // ── Cloud Run service URLs (called directly — no secrets needed) ─────────────
 export const ASSETS_URL   = "https://fetch-assets-266596137006.us-west3.run.app";
