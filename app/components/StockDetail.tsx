@@ -220,8 +220,8 @@ function StockDetailContent({ symbol }: { symbol: string }) {
       refreshBalance();
       refreshOwnedShares();
 
-    } catch (err: unknown) {
-      setOrderError(err.message || 'An error occurred while placing the order.');
+    } catch (err) {
+      setOrderError(err instanceof Error ? err.message : 'An error occurred while placing the order.');
       setOrderStep('error');
     }
   }
