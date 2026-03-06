@@ -24,9 +24,9 @@ exports.doTransaction = onRequest({ secrets: [mnemonicSecret, alpacaKey, alpacaS
     if (assetQuery.empty) return res.status(404).send("Token not found in machine.");
 
     const alpaca = new Alpaca({
-      keyId: alpacaKey.value(),
+      keyId:     alpacaKey.value(),
       secretKey: alpacaSecret.value(),
-      paper: true
+      paper:     process.env.ALPACA_PAPER !== 'false',
     });
 
     const latestTrade = await alpaca.getLatestTrade(requestedTicker.toUpperCase());

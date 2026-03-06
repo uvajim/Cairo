@@ -7,10 +7,12 @@ const { HDNodeWallet } = require('ethers');
 const app = express();
 app.use(express.json());
 
-// Allow requests from the Next.js dev server
+// CORS — allow all origins and handle preflight
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
 

@@ -213,9 +213,14 @@ function StockDetailContent({ symbol }: { symbol: string }) {
         }
       }
 
-      const data = await response.json();
+      const text = await response.text();
+      let data: { orderId?: string } = {};
+      try { data = JSON.parse(text); } catch {
+        // Cloud Run returned plain text — treat non-empty body as an error message
+        if (text) throw new Error(text);
+      }
 
-      setOrderId(data.orderId); // Save Alpaca Order ID
+      setOrderId(data.orderId ?? null); // Save Alpaca Order ID
       setOrderStep('paid');
       refreshBalance();
       refreshOwnedShares();
