@@ -2,6 +2,7 @@
 
 import { Link } from "react-router";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useSnapshots } from "../hooks/useSnapshots";
 
 // Indices are displayed by name but priced via their ETF proxies.
@@ -28,6 +29,7 @@ const ALL_SYMBOLS = [
 ].filter((s, i, arr) => arr.indexOf(s) === i); // dedupe
 
 export function Watchlist() {
+  const { t } = useTranslation();
   const quotes = useSnapshots(ALL_SYMBOLS);
 
   const today = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -37,12 +39,12 @@ export function Watchlist() {
       <div className="p-6 space-y-8">
 
         {/* Header */}
-        <h2 className="text-xl font-medium text-white">Markets</h2>
+        <h2 className="text-xl font-medium text-white">{t("watchlist.markets")}</h2>
 
         {/* Indices */}
         <div>
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-medium text-gray-400 text-sm">Indices</h3>
+            <h3 className="font-medium text-gray-400 text-sm">{t("watchlist.indices")}</h3>
             <span className="text-xs text-gray-500">{today}</span>
           </div>
           <div className="grid grid-cols-3 gap-2">
@@ -74,7 +76,7 @@ export function Watchlist() {
 
         {/* Top Movers */}
         <div>
-          <h3 className="font-medium text-gray-400 text-sm mb-4">Top movers</h3>
+          <h3 className="font-medium text-gray-400 text-sm mb-4">{t("watchlist.topMovers")}</h3>
           <div className="flex flex-wrap gap-2">
             {TOP_MOVERS.map((symbol) => {
               const q    = quotes[symbol];
@@ -102,7 +104,7 @@ export function Watchlist() {
 
         {/* Popular Stocks */}
         <div>
-          <h3 className="font-medium text-gray-400 text-sm mb-4">Popular stocks</h3>
+          <h3 className="font-medium text-gray-400 text-sm mb-4">{t("watchlist.popularStocks")}</h3>
           <div className="space-y-3">
             {POPULAR.map((stock) => {
               const q     = quotes[stock.symbol];
@@ -119,7 +121,7 @@ export function Watchlist() {
                     </div>
                     <div>
                       <div className="font-bold text-sm">{stock.symbol}</div>
-                      <div className="text-xs text-gray-400 truncate max-w-[100px]">{stock.name}</div>
+                      <div className="text-xs text-gray-400 truncate max-w-[160px]">{stock.name}</div>
                     </div>
                   </div>
                   <div className="text-right">

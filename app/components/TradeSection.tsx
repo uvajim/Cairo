@@ -60,7 +60,7 @@ export default function TradeSection() {
 
       {order && (
         <div className="result-box mt-4">
-          <span className="result-label">Order submitted</span>
+          <span className="result-label">Order Created</span>
           <span className="mono-text">ID: {order.id}</span>
           <span className="mono-text">Status: {order.status}</span>
           <span className="mono-text">

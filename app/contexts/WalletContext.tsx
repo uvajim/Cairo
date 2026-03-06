@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { BALANCE_URL } from "../lib/config";
 import {
   useAccount,
   useBalance,
@@ -14,30 +15,21 @@ import {
 } from "wagmi";
 import { useAppKit } from "@reown/appkit/react";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 interface WalletContextValue {
-  address:     string | null;
-  ethBalance:  number;
-  usdBalance:  number;
-  ethPrice:    number;
-  connecting:  boolean;
-  walletError: string | null;
-  connect:     () => void;
-  disconnect:  () => void;
+  address:         string | null;
+  ethBalance:      number;
+  usdBalance:      number;
+  accountBalance:  number;
+  ethPrice:        number;
+  connecting:      boolean;
+  walletError:     string | null;
+  connect:         () => void;
+  disconnect:      () => void;
+  refreshBalance:  () => void;
 }
 
-// ---------------------------------------------------------------------------
-// Context
-// ---------------------------------------------------------------------------
 
 const WalletContext = createContext<WalletContextValue | null>(null);
-
-// ---------------------------------------------------------------------------
-// Provider
-// ---------------------------------------------------------------------------
 
 export function WalletProvider({ children }: { children: ReactNode }) {
   const { address: wagmiAddress, isConnecting } = useAccount();
@@ -46,11 +38,33 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const address = wagmiAddress ?? null;
 
-  // ETH balance from wagmi
+  // ETH balance from wagmi (used for header pill)
   const { data: balanceData } = useBalance({ address: wagmiAddress });
-  const ethBalance = balanceData
-    ? Number(balanceData.value) / 1e18
-    : 0;
+  const ethBalance = balanceData ? Number(balanceData.value) / 1e18 : 0;
+
+  // Account balance from custom API (used for portfolio big number)
+  const [accountBalance, setAccountBalance] = useState(0);
+
+  const fetchBalance = async () => {
+    if (!wagmiAddress) return;
+    try {
+      const res  = await fetch(BALANCE_URL, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ account_id: wagmiAddress }),
+      });
+      const data = await res.json();
+      setAccountBalance(data?.amount ?? 0);
+    } catch { /* keep previous */ }
+  };
+
+  useEffect(() => {
+    if (!wagmiAddress) { setAccountBalance(0); return; }
+    fetchBalance();
+    const id = setInterval(fetchBalance, 30_000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wagmiAddress]);
 
   // Live ETH price from CoinGecko
   const [ethPrice,    setEthPrice]    = useState(0);
@@ -89,11 +103,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         address,
         ethBalance,
         usdBalance,
+        accountBalance,
         ethPrice,
-        connecting:  isConnecting,
+        connecting:     isConnecting,
         walletError,
         connect,
         disconnect,
+        refreshBalance: fetchBalance,
       }}
     >
       {children}

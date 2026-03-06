@@ -34,7 +34,14 @@ async function getActiveAssets() {
 // ─── Parse structured error from Alpaca SDK ──────────────────────────────────
 function parseAlpacaError(err) {
   const m = String(err.message ?? '').match(/code:\s*(\d+),\s*message:\s*(.*)/);
-  if (m) return { code: parseInt(m[1], 10), message: m[2] };
+  if (m) {
+    const code = parseInt(m[1], 10);
+    const msg  = m[2] && m[2] !== 'undefined' ? m[2]
+               : code === 401               ? 'Invalid or missing Alpaca API credentials'
+               : code === 403               ? 'Forbidden — check API key permissions'
+               : 'Alpaca API error';
+    return { code, message: msg };
+  }
   return { code: 500, message: err.message ?? 'Unknown error' };
 }
 
@@ -317,6 +324,89 @@ app.post('/api/transaction', async (req, res) => {
     const { code, message } = parseAlpacaError(err);
     console.error('[transaction]', code, message);
     res.status(code).json({ error: message });
+  }
+});
+
+// ─── POST /api/assets ────────────────────────────────────────────────────────
+app.post('/api/assets', async (req, res) => {
+  try {
+    const { walletAddress } = req.body;
+    if (!walletAddress) return res.status(400).json({ error: 'walletAddress is required' });
+
+    const upstream = await fetch('https://fetch-assets-266596137006.us-west3.run.app', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ walletAddress }),
+    });
+    const data = await upstream.json();
+    res.status(upstream.status).json(data);
+  } catch (err) {
+    console.error('[assets]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/trade/buy & /api/trade/sell ───────────────────────────────────
+async function executeTrade(side, req, res) {
+  try {
+    const { ticker, qty, walletAddress } = req.body;
+    if (!ticker || !qty || !walletAddress) {
+      return res.status(400).json({ error: 'ticker, qty, and walletAddress are required' });
+    }
+
+    const upstream = await fetch('https://market-maker-266596137006.us-west4.run.app', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ ticker, qty, walletAddress, side }),
+    });
+    const data = await upstream.json();
+    res.status(upstream.status).json(data);
+  } catch (err) {
+    console.error(`[trade/${side}]`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+app.post('/api/trade/buy',  (req, res) => executeTrade('buy',  req, res));
+app.post('/api/trade/sell', (req, res) => executeTrade('sell', req, res));
+
+// ─── POST /api/balance ───────────────────────────────────────────────────────
+app.post('/api/balance', async (req, res) => {
+  try {
+    const { account_id } = req.body;
+    if (!account_id) return res.status(400).json({ error: 'account_id is required' });
+
+    const upstream = await fetch('https://get-balance-266596137006.us-west3.run.app', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ account_id }),
+    });
+    const data = await upstream.json();
+    res.status(upstream.status).json(data);
+  } catch (err) {
+    console.error('[balance]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/deposit ────────────────────────────────────────────────────────
+app.post('/api/deposit', async (req, res) => {
+  try {
+    const { amount, address } = req.body;
+    if (!amount) return res.status(400).json({ error: 'amount is required' });
+
+    const upstream = await fetch('https://maritime-deposit-service-266596137006.us-south1.run.app', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ amount, address }),
+    });
+    const text = await upstream.text();
+    let json;
+    try { json = JSON.parse(text); } catch { json = { error: text }; }
+    res.status(upstream.status).json(json);
+  } catch (err) {
+    console.error('[deposit]', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 

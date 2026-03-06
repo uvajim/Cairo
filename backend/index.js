@@ -20,22 +20,17 @@ exports.doTransaction = onRequest({ secrets: [mnemonicSecret, alpacaKey, alpacaS
       return res.status(400).send("Missing required fields.");
     }
 
-    // 1. Verify the asset exists in your internal ledger
     const assetQuery = await db.collection("assets").where("ticker", "==", requestedTicker.toUpperCase()).limit(1).get();
     if (assetQuery.empty) return res.status(404).send("Token not found in machine.");
 
-    // 2. Initialize Alpaca dynamically using the secure keys
     const alpaca = new Alpaca({
       keyId: alpacaKey.value(),
       secretKey: alpacaSecret.value(),
-      paper: true // Set to false when you are ready for live trading
+      paper: true
     });
 
-    // 3. Fetch real-time Market Price from Alpaca
     const latestTrade = await alpaca.getLatestTrade(requestedTicker.toUpperCase());
     const marketPrice = latestTrade.Price;
-
-    // Calculate the total bill (e.g., 5 shares * $150.00 = $750.00)
     const requiredPayment = marketPrice * unitsRequested;
 
     // 4. Generate the unique Deposit Address
@@ -50,7 +45,6 @@ exports.doTransaction = onRequest({ secrets: [mnemonicSecret, alpacaKey, alpacaS
     const masterNode = HDNodeWallet.fromPhrase(mnemonicSecret.value());
     const depositWallet = masterNode.derivePath(`m/44'/60'/0'/0/${nextIndex}`);
 
-    // 5. Save the exact Invoice to Firestore
     await db.collection("pending_orders").doc(depositWallet.address.toLowerCase()).set({
       requestedTicker: requestedTicker.toUpperCase(),
       unitsToDispense: unitsRequested,
@@ -63,7 +57,6 @@ exports.doTransaction = onRequest({ secrets: [mnemonicSecret, alpacaKey, alpacaS
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    // 6. Return the bill to the user
     res.status(200).send({
       depositAddress: depositWallet.address,
       marketPriceLocked: marketPrice,

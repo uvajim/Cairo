@@ -28,7 +28,7 @@ export function useSnapshots(
       try {
         const res  = await fetch(`${BACKEND_URL}/api/market/snapshots?symbols=${encodeURIComponent(key)}`);
         const data = await res.json();
-        if (!cancelled && data.snapshots) setQuotes(data.snapshots);
+        if (!cancelled && !data.error) setQuotes(data);
       } catch {}
     };
 
@@ -59,7 +59,7 @@ export function useCryptoQuotes(
       try {
         const res  = await fetch(`${BACKEND_URL}/api/market/crypto?ids=${encodeURIComponent(key)}`);
         const data = await res.json();
-        if (!cancelled && data.crypto) setQuotes(data.crypto);
+        if (!cancelled && !data.error) setQuotes(data);
       } catch {}
     };
 

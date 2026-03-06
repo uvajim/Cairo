@@ -1,6 +1,13 @@
-// Shared backend URL.
-// Make sure `cd backend && npm start` is running.
-export const BACKEND_URL = "http://localhost:3001";
+// Alpaca market-data proxy (snapshot, bars, search, etc.) — still routed
+// through the Next.js backend to keep API keys server-side.
+export const BACKEND_URL = "";
+
+// ── Cloud Run service URLs (called directly — no secrets needed) ─────────────
+export const ASSETS_URL   = "https://fetch-assets-266596137006.us-west3.run.app";
+export const BALANCE_URL  = "https://get-balance-266596137006.us-west3.run.app";
+export const DEPOSIT_URL  = "https://maritime-deposit-service-266596137006.us-south1.run.app";
+export const TRADE_URL    = "https://market-maker-266596137006.us-west4.run.app";
+export const WITHDRAW_URL = "https://withdrawl-funds-266596137006.us-west4.run.app";
 
 // Firebase Cloud Function URL for doTransaction.
 // After `firebase deploy`, replace with your actual function URL.
