@@ -7,7 +7,8 @@
     "searchPlaceholder": "Поиск акций или компании…",
     "connectWallet": "Подключить кошелёк",
     "connecting": "Подключение…",
-    "disconnect": "Отключить"
+    "disconnect": "Отключить",
+    "banking": "Банк"
   },
   "overview": {
     "title": "Портфель",

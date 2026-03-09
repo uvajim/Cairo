@@ -7,7 +7,8 @@ import { useTranslation } from "react-i18next";
 import { PortfolioChart } from "./PortfolioChart";
 import { Watchlist } from "./Watchlist";
 import { useWallet } from "../contexts/WalletContext";
-import { BACKEND_URL, ASSETS_URL, DEPOSIT_URL } from "../lib/config";
+import { BACKEND_URL, ASSETS_URL } from "../lib/config";
+import { DepositMethodModal } from "./DepositMethodModal";
 import { holdingsCache } from "../lib/holdingsCache";
 
 function HoldingRow({ ticker, qty, price, total }: { ticker: string; qty: number; price: number; total: number }) {
@@ -107,37 +108,7 @@ export function Portfolio() {
     return () => { cancelled = true; clearInterval(id); };
   }, [address]);
 
-  const PRESETS = [50, 100, 250, 500, 1000];
-  const [showDepositPanel, setShowDepositPanel] = useState(false);
-  const [selectedAmount,   setSelectedAmount]   = useState<number | null>(null);
-  const [customAmount,     setCustomAmount]      = useState("");
-  const [depositLoading,   setDepositLoading]   = useState(false);
-  const [depositError,     setDepositError]      = useState(false);
-
-  const depositAmount = selectedAmount ?? (customAmount ? Number(customAmount) : null);
-
-  const handleDeposit = async () => {
-    if (!depositAmount || depositAmount <= 0) return;
-    setDepositLoading(true);
-    setDepositError(false);
-    try {
-      const res  = await fetch(DEPOSIT_URL, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ amount: depositAmount, address }),
-      });
-      const json = await res.json();
-      if (json.invoice_url) {
-        window.open(json.invoice_url, '_blank', 'noopener,noreferrer');
-      } else {
-        setDepositError(true);
-      }
-    } catch {
-      setDepositError(true);
-    } finally {
-      setDepositLoading(false);
-    }
-  };
+  const [showDepositModal, setShowDepositModal] = useState(false);
 
   // Uses the fixed value from WalletContext
   const holdingsValue  = Object.entries(holdings).reduce((sum, [ticker, qty]) => sum + qty * (holdingPrices[ticker] ?? 0), 0);
@@ -223,6 +194,10 @@ export function Portfolio() {
               </div>
             </div>
 
+            {showDepositModal && (
+              <DepositMethodModal onClose={() => setShowDepositModal(false)} />
+            )}
+
             {address && (
                 <div className="mb-8">
                   <div className="flex items-center justify-between py-4 border-b border-gray-800">
@@ -233,66 +208,12 @@ export function Portfolio() {
                       </p>
                     </div>
                     <button
-                        onClick={() => { setShowDepositPanel(p => !p); setDepositError(false); }}
+                        onClick={() => setShowDepositModal(true)}
                         className="bg-white text-black text-sm font-bold px-4 py-2 rounded-full hover:bg-gray-200 transition-colors"
                     >
                       {t("overview.deposit")}
                     </button>
                   </div>
-
-                  {showDepositPanel && (
-                      <div className="mt-4 bg-[#1E1E24] rounded-2xl p-5">
-                        <p className="text-sm font-semibold mb-3">{t("overview.depositQuestion")}</p>
-                        <div className="flex flex-wrap gap-2 mb-4">
-                          {PRESETS.map(p => (
-                              <button
-                                  key={p}
-                                  onClick={() => { setSelectedAmount(p); setCustomAmount(""); }}
-                                  className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${
-                                      selectedAmount === p
-                                          ? "bg-white text-black"
-                                          : "bg-[#2A2B30] text-gray-300 hover:bg-gray-700"
-                                  }`}
-                              >
-                                ${p}
-                              </button>
-                          ))}
-                          <button
-                              onClick={() => { setSelectedAmount(null); setCustomAmount(""); }}
-                              className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${
-                                  selectedAmount === null && customAmount === ""
-                                      ? "bg-white text-black"
-                                      : "bg-[#2A2B30] text-gray-300 hover:bg-gray-700"
-                              }`}
-                          >
-                            {t("overview.other")}
-                          </button>
-                        </div>
-
-                        {selectedAmount === null && (
-                            <input
-                                type="number"
-                                min="1"
-                                placeholder={t("overview.enterAmount")}
-                                value={customAmount}
-                                onChange={e => setCustomAmount(e.target.value)}
-                                className="w-full bg-[#2A2B30] border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 outline-none focus:border-white/30 mb-4"
-                            />
-                        )}
-
-                        {depositError && (
-                            <p className="text-red-400 text-sm mb-3">{t("overview.depositError")}</p>
-                        )}
-
-                        <button
-                            onClick={handleDeposit}
-                            disabled={depositLoading || !depositAmount || depositAmount <= 0}
-                            className="w-full bg-white text-black text-sm font-bold py-2.5 rounded-full hover:bg-gray-200 transition-colors disabled:opacity-40"
-                        >
-                          {depositLoading ? t("overview.generatingLink") : depositAmount ? t("overview.continueAmount", { amount: depositAmount }) : t("overview.continue")}
-                        </button>
-                      </div>
-                  )}
                 </div>
             )}
 

@@ -7,7 +7,8 @@
     "searchPlaceholder": "Rechercher actions ou société…",
     "connectWallet": "Connecter le portefeuille",
     "connecting": "Connexion…",
-    "disconnect": "Déconnecter"
+    "disconnect": "Déconnecter",
+    "banking": "Banque"
   },
   "overview": {
     "title": "Portefeuille",

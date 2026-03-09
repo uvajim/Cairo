@@ -5,6 +5,7 @@ import { StockDetail } from "./components/StockDetail";
 import { Balance } from "./components/Balance";
 import { PortfolioHoldings } from "./components/PortfolioHoldings";
 import { GetWallet } from "./components/GetWallet";
+import { Banking } from "./components/Banking";
 
 export const router = createBrowserRouter([
   {
@@ -15,6 +16,7 @@ export const router = createBrowserRouter([
       { path: "stock/:symbol", Component: StockDetail },
       { path: "portfolio", Component: PortfolioHoldings },
       { path: "balance",    Component: Balance    },
+      { path: "banking",    Component: Banking    },
       { path: "get-wallet", Component: GetWallet  },
     ],
   },

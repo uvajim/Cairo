@@ -20,6 +20,7 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-i18next": "^16.5.4",
+    "react-plaid-link": "^4.1.1",
     "react-router": "^7.13.0",
     "recharts": "^3.7.0",
     "viem": "^2.46.2",

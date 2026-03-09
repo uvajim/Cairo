@@ -7,13 +7,26 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { BALANCE_URL } from "../lib/config";
 import {
   useAccount,
   useBalance,
   useDisconnect,
+  useReadContract,
 } from "wagmi";
+import { formatUnits } from "viem";
 import { useAppKit } from "@reown/appkit/react";
+import { MARITIME_DEPOSIT_CONTRACT } from "../lib/config";
+
+// Minimal ABI — only balanceOf needed
+const MDT_ABI = [
+  {
+    name: "balanceOf",
+    type: "function",
+    stateMutability: "view",
+    inputs:  [{ name: "account", type: "address" }],
+    outputs: [{ type: "uint256" }],
+  },
+] as const;
 
 interface WalletContextValue {
   address:         string | null;
@@ -28,7 +41,6 @@ interface WalletContextValue {
   refreshBalance:  () => void;
 }
 
-
 const WalletContext = createContext<WalletContextValue | null>(null);
 
 export function WalletProvider({ children }: { children: ReactNode }) {
@@ -42,29 +54,16 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const { data: balanceData } = useBalance({ address: wagmiAddress });
   const ethBalance = balanceData ? Number(balanceData.value) / 1e18 : 0;
 
-  // Account balance from custom API (used for portfolio big number)
-  const [accountBalance, setAccountBalance] = useState(0);
+  // MDT balance read directly from the contract (6 decimals)
+  const { data: mdtRaw, refetch: refetchMdt } = useReadContract({
+    address: MARITIME_DEPOSIT_CONTRACT,
+    abi:     MDT_ABI,
+    functionName: "balanceOf",
+    args:    wagmiAddress ? [wagmiAddress] : undefined,
+    query:   { enabled: !!wagmiAddress, refetchInterval: 30_000 },
+  });
 
-  const fetchBalance = async () => {
-    if (!wagmiAddress) return;
-    try {
-      const res  = await fetch(BALANCE_URL, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ account_id: wagmiAddress }),
-      });
-      const data = await res.json();
-      setAccountBalance(data?.amount ?? 0);
-    } catch { /* keep previous */ }
-  };
-
-  useEffect(() => {
-    if (!wagmiAddress) { setAccountBalance(0); return; }
-    fetchBalance();
-    const id = setInterval(fetchBalance, 30_000);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wagmiAddress]);
+  const accountBalance = mdtRaw !== undefined ? Number(formatUnits(mdtRaw, 6)) : 0;
 
   // Live ETH price from CoinGecko
   const [ethPrice,    setEthPrice]    = useState(0);
@@ -109,7 +108,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         walletError,
         connect,
         disconnect,
-        refreshBalance: fetchBalance,
+        refreshBalance: () => { refetchMdt(); },
       }}
     >
       {children}

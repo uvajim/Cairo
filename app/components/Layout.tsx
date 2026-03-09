@@ -1,7 +1,7 @@
 "use client";
 
 import { Outlet, Link, useLocation, useNavigate } from "react-router";
-import { Globe, Search, CircleDollarSign, LayoutDashboard, PieChart, Smartphone } from "lucide-react";
+import { Globe, Search, CircleDollarSign, LayoutDashboard, PieChart, Smartphone, Landmark } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useWallet } from "../contexts/WalletContext";
@@ -19,6 +19,7 @@ const NAV_KEYS = [
   { path: "/",            key: "nav.overview",  icon: LayoutDashboard  },
   { path: "/portfolio",   key: "nav.portfolio", icon: PieChart         },
   { path: "/balance",     key: "nav.balance",   icon: CircleDollarSign },
+  { path: "/banking",     key: "nav.banking",   icon: Landmark         },
   { path: "/get-wallet",  key: "nav.getApp",    icon: Smartphone       },
 ];
 
@@ -117,35 +118,31 @@ export function Layout() {
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <header className="border-b border-gray-900 bg-black sticky top-0 z-50">
         <div className="max-w-[1024px] mx-auto px-6">
-          <div className="flex items-center justify-between h-16">
+          <div className="flex items-center h-16">
 
-            {/* Logo */}
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center text-black">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 2L2 22H22L12 2ZM12 6L18 18H6L12 6Z" />
-                </svg>
-              </div>
+            {/* Logo — fixed to the left */}
+            <div className="flex items-center gap-2 mr-16">
+              <img src="/maritime.png" alt="Maritime" className="w-8 h-8 object-contain invert" />
               <h1 className="text-xl font-bold tracking-tight">Maritime</h1>
             </div>
 
             {/* Desktop nav links */}
-            <nav className="hidden md:flex gap-6">
+            <nav className="hidden md:flex items-center gap-6">
               {NAV_KEYS.map((item) => (
                 <Link
                   key={item.path}
                   to={item.path}
-                  className={`flex flex-col items-center leading-tight transition-colors hover:text-white ${
+                  className={`text-sm font-medium transition-colors hover:text-white whitespace-nowrap ${
                     isActive(item.path) ? "text-white" : "text-gray-500"
                   }`}
                 >
-                  <span className="text-sm font-medium">{t(item.key)}</span>
+                  {t(item.key)}
                 </Link>
               ))}
             </nav>
 
-            {/* Right: search + lang + connect wallet */}
-            <div className="flex items-center gap-4">
+            {/* Right: search + lang + connect wallet — flex-1 justify-end */}
+            <div className="flex items-center gap-4 flex-1 justify-end pl-8">
               <div ref={searchRef} className="hidden md:block relative">
                 <form onSubmit={handleSearch} className="flex items-center relative">
                   <Search className="absolute left-3 w-3.5 h-3.5 text-gray-500 pointer-events-none" />
@@ -221,7 +218,7 @@ export function Layout() {
               ) : address ? (
                 <div ref={walletMenuRef} className="relative flex items-center">
                   {/* Balance pill — sits behind */}
-                  <div className="bg-[#1E1E24] px-3 py-1.5 rounded-full text-sm text-gray-300 font-normal pr-6 -mr-4 z-0">
+                  <div className="bg-[#1E1E24] border border-transparent px-3 py-1.5 rounded-full text-sm text-gray-300 font-normal pr-6 -mr-4 z-0">
                     ${usdBalance.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                   {/* Address pill — sits on top */}
@@ -260,7 +257,7 @@ export function Layout() {
 
       {/* ── Mobile bottom nav ──────────────────────────────────────────── */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-[#1A1B1F] border-t border-gray-800 z-50">
-        <div className="grid grid-cols-4">
+        <div className="grid grid-cols-5">
           {NAV_KEYS.map((item) => (
             <Link
               key={item.path}
@@ -270,7 +267,7 @@ export function Layout() {
               }`}
             >
               <item.icon className="w-5 h-5" />
-              <span className="text-xs font-medium">{t(item.key)}</span>
+              <span className="text-[10px] font-medium">{t(item.key)}</span>
             </Link>
           ))}
         </div>

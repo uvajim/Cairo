@@ -4,8 +4,7 @@ import { useEffect, useState } from 'react';
 import { ArrowUpRight, ArrowDownLeft, Loader2 } from 'lucide-react';
 import { useWallet } from '../contexts/WalletContext';
 import { Link } from 'react-router';
-
-const ACTIVITY_URL = 'https://get-activity-266596137006.us-west4.run.app';
+import { ACTIVITY_URL } from '../lib/config';
 
 interface Order {
   id: string;

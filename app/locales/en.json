@@ -7,7 +7,8 @@
     "searchPlaceholder": "Search stocks or company…",
     "connectWallet": "Connect Wallet",
     "connecting": "Connecting…",
-    "disconnect": "Disconnect"
+    "disconnect": "Disconnect",
+    "banking": "Banking"
   },
   "overview": {
     "title": "Portfolio",

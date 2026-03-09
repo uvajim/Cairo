@@ -16,6 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Maritime Exchange",
   description: "Maritime Hybrid Decentralised Exchange",
+  icons: { icon: "/maritime.png" },
 };
 
 export default function RootLayout({

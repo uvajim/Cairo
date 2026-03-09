@@ -1,15 +1,24 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { ArrowDownToLine, ArrowUpFromLine, ArrowUpRight, ArrowDownLeft, Loader2, ArrowDownCircle, ArrowUpCircle } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import {
+  ArrowDownToLine, ArrowUpFromLine, ArrowUpRight, ArrowDownLeft,
+  Loader2, ArrowDownCircle, ArrowUpCircle, Wallet, Landmark, CheckCircle2,
+} from "lucide-react";
 import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
+import { usePlaidLink } from "react-plaid-link";
+import { useWriteContract, useWaitForTransactionReceipt, useChainId, useSwitchChain, usePublicClient } from "wagmi";
+import { parseUnits, pad, maxUint256 } from "viem";
 import { useWallet } from "../contexts/WalletContext";
-import { DEPOSIT_URL, WITHDRAW_URL } from "../lib/config";
+import {
+  ACTIVITY_URL, BACKEND_URL,
+  MARITIME_DEPOSIT_CONTRACT, SEPOLIA_STABLECOINS,
+  ERC20_APPROVE_ABI, MARITIME_DEPOSIT_ABI, MARITIME_WITHDRAW_ABI,
+  CONTRACT_ERROR_MESSAGES,
+} from "../lib/config";
 
-const shortAddress = (addr: string) => `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-
-const ACTIVITY_URL = "https://get-activity-266596137006.us-west4.run.app";
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface Order {
   id: string;
@@ -23,7 +32,15 @@ interface Order {
   createdAt: string;
 }
 
-// Module-level cache — survives tab switches within the same session
+interface AchAccount {
+  id: string;
+  name: string;
+  mask: string;
+  subtype: string;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 const activityCache: { address: string; orders: Order[] } = { address: "", orders: [] };
 
 function relativeTime(iso: string): string {
@@ -36,111 +53,450 @@ function relativeTime(iso: string): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+// ── Plaid Link inner — defined outside Balance to avoid re-creation ───────────
+
+function PlaidLinkInner({ token, walletAddress, onLinked, onError }: {
+  token: string;
+  walletAddress: string;
+  onLinked: () => void;
+  onError: (msg: string) => void;
+}) {
+  const [exchanging, setExchanging] = useState(false);
+
+  const onSuccess = useCallback(async (public_token: string) => {
+    setExchanging(true);
+    try {
+      const res  = await fetch(`${BACKEND_URL}/api/plaid/exchange-token`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ walletAddress, public_token }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Exchange failed.");
+      onLinked();
+    } catch (err: unknown) {
+      onError(err instanceof Error ? err.message : "Bank link failed.");
+      setExchanging(false);
+    }
+  }, [walletAddress, onLinked, onError]);
+
+  const { open, ready } = usePlaidLink({ token, onSuccess });
+  useEffect(() => { if (ready) open(); }, [ready, open]);
+
+  return (
+    <div className="flex items-center gap-2 text-sm text-gray-400">
+      <Loader2 className="w-4 h-4 animate-spin" />
+      {exchanging ? "Linking account…" : (
+        <>
+          Opening Plaid…
+          <button onClick={() => open()} disabled={!ready}
+            className="text-xs text-[#00c805] hover:text-[#00b004] transition-colors disabled:opacity-40 ml-1">
+            Click here if it didn&apos;t open
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Method picker pill ─────────────────────────────────────────────────────────
+
+function MethodPicker({ value, onChange }: {
+  value: "stablecoins" | "ach";
+  onChange: (v: "stablecoins" | "ach") => void;
+}) {
+  return (
+    <div className="flex gap-1 bg-black rounded-full p-1 w-fit">
+      {(["stablecoins", "ach"] as const).map(m => (
+        <button key={m} onClick={() => onChange(m)}
+          className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-colors ${
+            value === m ? "bg-white text-black" : "text-gray-400 hover:text-white"
+          }`}>
+          {m === "stablecoins"
+            ? <><Wallet   className="w-3 h-3" /> Stablecoins</>
+            : <><Landmark className="w-3 h-3" /> ACH Bank</>
+          }
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
+const STABLECOIN_PRESETS = [50, 100, 250, 500, 1000];
+
 export function Balance() {
   const { t } = useTranslation();
   const { address, usdBalance, accountBalance, connect, refreshBalance } = useWallet();
 
-  // Deposit state
-  const PRESETS = [50, 100, 250, 500, 1000];
+  // ── Panel visibility ───────────────────────────────────────────────────────
   const [showDepositPanel,  setShowDepositPanel]  = useState(false);
-  const [selectedAmount,    setSelectedAmount]    = useState<number | null>(null);
-  const [customAmount,      setCustomAmount]       = useState("");
-  const [depositLoading,    setDepositLoading]    = useState(false);
-  const [depositError,      setDepositError]      = useState(false);
+  const [showWithdrawPanel, setShowWithdrawPanel] = useState(false);
+
+  // ── Method picker per panel ────────────────────────────────────────────────
+  const [depositMethod,  setDepositMethod]  = useState<"stablecoins" | "ach">("stablecoins");
+  const [withdrawMethod, setWithdrawMethod] = useState<"stablecoins" | "ach">("stablecoins");
+
+  // ── Stablecoin deposit (web3) ──────────────────────────────────────────────
+  const [selectedAmount, setSelectedAmount] = useState<number | null>(null);
+  const [customAmount,   setCustomAmount]   = useState("");
+  const [selectedToken,  setSelectedToken]  = useState<"USDC" | "USDT">("USDC");
   const depositAmount = selectedAmount ?? (customAmount ? Number(customAmount) : null);
 
-  const handleDeposit = async () => {
-    if (!depositAmount || depositAmount <= 0) return;
-    setDepositLoading(true);
-    setDepositError(false);
+  type TxStep = "idle" | "approving" | "depositing" | "done" | "error";
+  const [txStep,       setTxStep]       = useState<TxStep>("idle");
+  const [txErrMsg,     setTxErrMsg]     = useState<string | null>(null);
+  const [skipApprove,  setSkipApprove]  = useState(false);
+  const [depositTxHash, setDepositTxHash] = useState<`0x${string}` | undefined>();
+
+  const { writeContractAsync } = useWriteContract();
+  const chainId = useChainId();
+  const { switchChainAsync } = useSwitchChain();
+  const sepoliaClient = usePublicClient({ chainId: 11155111 });
+
+  const handleWeb3Deposit = async () => {
+    if (!depositAmount || depositAmount < 1 || !address || !sepoliaClient) return;
+    setTxStep("approving"); setTxErrMsg(null); setSkipApprove(false);
     try {
-      const res  = await fetch(DEPOSIT_URL, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ amount: depositAmount, address }),
+      if (chainId !== 11155111) await switchChainAsync({ chainId: 11155111 });
+      const tokenAddress = SEPOLIA_STABLECOINS[selectedToken];
+      const rawAmount    = parseUnits(depositAmount.toString(), 6);
+      const userId       = pad(address as `0x${string}`, { size: 32 });
+
+      // Check existing allowance — skip approve if already sufficient
+      const currentAllowance = await sepoliaClient.readContract({
+        address: tokenAddress, abi: ERC20_APPROVE_ABI,
+        functionName: "allowance", args: [address as `0x${string}`, MARITIME_DEPOSIT_CONTRACT],
       });
-      const json = await res.json();
-      if (json.invoice_url) {
-        window.open(json.invoice_url, "_blank", "noopener,noreferrer");
+      if (currentAllowance < rawAmount) {
+        const approveHash = await writeContractAsync({
+          address: tokenAddress, abi: ERC20_APPROVE_ABI,
+          functionName: "approve", args: [MARITIME_DEPOSIT_CONTRACT, maxUint256],
+          gas: 100_000n,
+        });
+        await sepoliaClient.waitForTransactionReceipt({ hash: approveHash });
       } else {
-        setDepositError(true);
+        setSkipApprove(true);
       }
-    } catch {
-      setDepositError(true);
-    } finally {
-      setDepositLoading(false);
-    }
-  };
 
-  // Withdraw state
-  const [showWithdrawPanel, setShowWithdrawPanel] = useState(false);
-  const [withdrawAmount, setWithdrawAmount]       = useState("");
-  const [withdrawing, setWithdrawing]             = useState(false);
-
-  // Floor to cents to avoid float precision issues (e.g. 49.995 → 49.99)
-  const maxWithdrawable = Math.floor(accountBalance * 100) / 100;
-  const withdrawNum     = parseFloat(withdrawAmount) || 0;
-  const remaining       = accountBalance - withdrawNum;
-  // Small epsilon so typing the exact floored value is never blocked
-  const isOverMax       = withdrawNum > maxWithdrawable + 0.001;
-  const canSubmit       = withdrawNum > 0 && !isOverMax;
-
-  const [withdrawError, setWithdrawError] = useState<string | null>(null);
-
-  const handleWithdraw = async () => {
-    if (!canSubmit) return;
-    setWithdrawing(true);
-    setWithdrawError(null);
-    try {
-      const res  = await fetch(WITHDRAW_URL, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ walletAddress: address, amount: withdrawNum }),
+      setTxStep("depositing");
+      const depositHash = await writeContractAsync({
+        address: MARITIME_DEPOSIT_CONTRACT, abi: MARITIME_DEPOSIT_ABI,
+        functionName: "deposit", args: [tokenAddress, rawAmount, userId],
+        gas: 200_000n,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message ?? "Withdrawal failed.");
-      setShowWithdrawPanel(false);
-      setWithdrawAmount("");
+      await sepoliaClient.waitForTransactionReceipt({ hash: depositHash });
+
+      setDepositTxHash(depositHash);
+      setTxStep("done");
       refreshBalance();
     } catch (err: unknown) {
-      setWithdrawError(err instanceof Error ? err.message : "Withdrawal failed.");
-    } finally {
-      setWithdrawing(false);
+      setTxStep("error");
+      const e = err as { shortMessage?: string; message?: string; revert?: { name?: string }; reason?: string };
+      const revertName = e?.revert?.name ?? e?.reason ?? "";
+      setTxErrMsg(CONTRACT_ERROR_MESSAGES[revertName] ?? e?.shortMessage ?? e?.message ?? "Failed.");
     }
   };
 
-  // Activity state
+  // ── Stablecoin withdraw ────────────────────────────────────────────────────
+  const maxWithdrawable  = Math.floor(accountBalance * 100) / 100;
+  const [withdrawAmount,  setWithdrawAmount]  = useState("");
+  const [withdrawToken,   setWithdrawToken]   = useState<"USDC" | "USDT">("USDC");
+  const [withdrawHash,    setWithdrawHash]    = useState<`0x${string}` | undefined>();
+  type WdStep = "idle" | "pending" | "done" | "error";
+  const [wdStep,    setWdStep]    = useState<WdStep>("idle");
+  const [wdErrMsg,  setWdErrMsg]  = useState<string | null>(null);
+
+  const { isSuccess: withdrawConfirmed } = useWaitForTransactionReceipt({ hash: withdrawHash });
+
+  useEffect(() => {
+    if (!withdrawConfirmed || wdStep !== "pending") return;
+    setWdStep("done"); refreshBalance();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [withdrawConfirmed]);
+
+  const withdrawNum  = parseFloat(withdrawAmount) || 0;
+  const remaining    = accountBalance - withdrawNum;
+  const isOverMax    = withdrawNum > maxWithdrawable + 0.001;
+  const canWithdraw  = withdrawNum > 0 && !isOverMax;
+
+  const handleStablecoinWithdraw = async () => {
+    if (!canWithdraw || !address || !sepoliaClient) return;
+    setWdStep("pending"); setWdErrMsg(null); setWithdrawHash(undefined);
+    try {
+      if (chainId !== 11155111) await switchChainAsync({ chainId: 11155111 });
+      const tokenAddress = SEPOLIA_STABLECOINS[withdrawToken];
+      const rawAmount    = parseUnits(withdrawNum.toString(), 6);
+
+      // Pre-check vault liquidity before sending the transaction
+      const vaultBal = await sepoliaClient.readContract({
+        address: MARITIME_DEPOSIT_CONTRACT, abi: MARITIME_WITHDRAW_ABI,
+        functionName: "vaultBalance", args: [tokenAddress],
+      });
+      if (vaultBal < rawAmount) {
+        setWdStep("error");
+        setWdErrMsg("Vault balance too low. Try again later.");
+        return;
+      }
+
+      const hash = await writeContractAsync({
+        address: MARITIME_DEPOSIT_CONTRACT, abi: MARITIME_WITHDRAW_ABI,
+        functionName: "withdraw", args: [tokenAddress, rawAmount],
+        gas: 200_000n,
+      });
+      setWithdrawHash(hash);
+    } catch (err: unknown) {
+      setWdStep("error");
+      const e = err as { shortMessage?: string; message?: string; revert?: { name?: string }; reason?: string };
+      const revertName = e?.revert?.name ?? e?.reason ?? "";
+      setWdErrMsg(CONTRACT_ERROR_MESSAGES[revertName] ?? e?.shortMessage ?? e?.message ?? "Withdrawal failed.");
+    }
+  };
+
+  // ── ACH shared state ───────────────────────────────────────────────────────
+  type AchStatus = "idle" | "checking" | "linked" | "unlinked";
+  const [achStatus,      setAchStatus]      = useState<AchStatus>("idle");
+  const [achAccounts,    setAchAccounts]    = useState<AchAccount[]>([]);
+  const [achLinkToken,   setAchLinkToken]   = useState<string | null>(null);
+  const [achLinkLoading, setAchLinkLoading] = useState(false);
+  const [achLinkError,   setAchLinkError]   = useState<string | null>(null);
+
+  // ACH form fields (reused for both deposit and withdraw)
+  const [achAccountId, setAchAccountId] = useState("");
+  const [achAmount,    setAchAmount]    = useState("");
+  const [achLegalName, setAchLegalName] = useState("");
+  const [achLoading,   setAchLoading]   = useState(false);
+  const [achSuccess,   setAchSuccess]   = useState(false);
+  const [achError,     setAchError]     = useState<string | null>(null);
+
+  const achAmountNum = parseFloat(achAmount);
+  const achCanSubmit = achAccountId && achLegalName.trim().length >= 2 && achAmountNum >= 1;
+
+  // Check link status when ACH tab is selected in either panel
+  useEffect(() => {
+    if (!address || achStatus !== "idle") return;
+    const needsCheck =
+      (showDepositPanel  && depositMethod  === "ach") ||
+      (showWithdrawPanel && withdrawMethod === "ach");
+    if (!needsCheck) return;
+
+    setAchStatus("checking");
+    fetch(`${BACKEND_URL}/api/plaid/linked`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ walletAddress: address }),
+    })
+      .then(r => r.json())
+      .then(async data => {
+        if (data.linked) {
+          const acctRes  = await fetch(`${BACKEND_URL}/api/plaid/accounts`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ walletAddress: address }),
+          });
+          const acctData = await acctRes.json();
+          const list: AchAccount[] = acctData.accounts ?? [];
+          setAchAccounts(list);
+          if (list.length > 0) setAchAccountId(list[0].id);
+          setAchStatus("linked");
+        } else {
+          setAchStatus("unlinked");
+        }
+      })
+      .catch(() => setAchStatus("unlinked"));
+  }, [showDepositPanel, showWithdrawPanel, depositMethod, withdrawMethod, achStatus, address]);
+
+  const startPlaidLink = async () => {
+    if (!address) return;
+    setAchLinkLoading(true); setAchLinkError(null);
+    try {
+      const res  = await fetch(`${BACKEND_URL}/api/plaid/create-link-token`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ walletAddress: address }),
+      });
+      const data = await res.json();
+      if (data.link_token) setAchLinkToken(data.link_token);
+      else setAchLinkError(data.error ?? "Failed to start bank connection.");
+    } catch { setAchLinkError("Failed to start bank connection."); }
+    finally { setAchLinkLoading(false); }
+  };
+
+  const onBankLinked = useCallback(async () => {
+    setAchLinkToken(null);
+    if (!address) return;
+    try {
+      const res  = await fetch(`${BACKEND_URL}/api/plaid/accounts`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ walletAddress: address }),
+      });
+      const data = await res.json();
+      const list: AchAccount[] = data.accounts ?? [];
+      setAchAccounts(list);
+      if (list.length > 0) setAchAccountId(list[0].id);
+    } catch { /* keep empty */ }
+    setAchStatus("linked");
+  }, [address]);
+
+  const handleAchTransfer = async (type: "deposit" | "withdraw") => {
+    if (!achCanSubmit || !address) return;
+    setAchLoading(true); setAchError(null);
+    const endpoint = type === "deposit"
+      ? `${BACKEND_URL}/api/plaid/transfer/deposit`
+      : `${BACKEND_URL}/api/plaid/transfer/withdraw`;
+    try {
+      const res  = await fetch(endpoint, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          walletAddress: address,
+          accountId: achAccountId,
+          amount: achAmountNum.toFixed(2),
+          legalName: achLegalName.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.reason ?? data.error ?? "Transfer failed.");
+      setAchSuccess(true);
+    } catch (err: unknown) {
+      setAchError(err instanceof Error ? err.message : "Transfer failed.");
+    } finally { setAchLoading(false); }
+  };
+
+  const resetAchForm = () => {
+    setAchAmount(""); setAchLegalName("");
+    setAchSuccess(false); setAchError(null);
+  };
+
+  // ── Activity ───────────────────────────────────────────────────────────────
   const [orders,  setOrders]  = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
 
   useEffect(() => {
     if (!address) { setOrders([]); return; }
-
-    // Serve from cache if we already fetched for this address
     if (activityCache.address === address && activityCache.orders.length > 0) {
-      setOrders(activityCache.orders);
-      return;
+      setOrders(activityCache.orders); return;
     }
-
-    setLoading(true);
-    setError(null);
+    setLoading(true); setError(null);
     fetch(ACTIVITY_URL, {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ walletAddress: address }),
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ walletAddress: address }),
     })
       .then(r => r.json())
       .then(data => {
-        const orders = data.executedOrders ?? [];
-        activityCache.address = address;
-        activityCache.orders  = orders;
-        setOrders(orders);
+        const o = data.executedOrders ?? [];
+        activityCache.address = address; activityCache.orders = o;
+        setOrders(o);
       })
       .catch(() => setError("loadError"))
       .finally(() => setLoading(false));
   }, [address]);
 
+  // ── ACH section (shared JSX used in both panels) ──────────────────────────
+  const renderAchSection = (panelType: "deposit" | "withdraw") => {
+    if (achStatus === "checking") return (
+      <div className="flex items-center gap-2 py-4 text-gray-400 text-sm">
+        <Loader2 className="w-4 h-4 animate-spin" /> Checking bank connection…
+      </div>
+    );
+
+    if (achStatus === "unlinked") return (
+      <div className="space-y-3 py-2">
+        <p className="text-sm text-gray-400">No bank account linked yet.</p>
+        {achLinkError && <p className="text-xs text-[#ff5000]">{achLinkError}</p>}
+        {achLinkToken ? (
+          <PlaidLinkInner
+            token={achLinkToken}
+            walletAddress={address!}
+            onLinked={onBankLinked}
+            onError={msg => { setAchLinkError(msg); setAchLinkToken(null); }}
+          />
+        ) : (
+          <button onClick={startPlaidLink} disabled={achLinkLoading}
+            className="flex items-center gap-2 bg-[#00c805] text-black text-sm font-bold px-5 py-2.5 rounded-full hover:bg-[#00b004] transition-colors disabled:opacity-40">
+            {achLinkLoading
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : <Landmark className="w-4 h-4" />
+            }
+            Connect Bank
+          </button>
+        )}
+      </div>
+    );
+
+    // linked
+    if (achSuccess) return (
+      <div className="flex flex-col items-center py-4 gap-3 text-center">
+        <div className="w-10 h-10 rounded-full bg-[#00c805]/15 flex items-center justify-center">
+          <CheckCircle2 className="w-5 h-5 text-[#00c805]" />
+        </div>
+        <div>
+          <p className="font-bold text-sm">Transfer submitted</p>
+          <p className="text-xs text-gray-400 mt-0.5">ACH settles in 1–3 business days.</p>
+        </div>
+        <button onClick={resetAchForm}
+          className="text-xs font-bold text-gray-400 hover:text-white transition-colors">
+          New transfer
+        </button>
+      </div>
+    );
+
+    return (
+      <div className="space-y-3">
+        {achAccounts.length > 0 ? (
+          <div>
+            <label className="text-xs text-gray-400 mb-1.5 block">Account</label>
+            <select value={achAccountId} onChange={e => setAchAccountId(e.target.value)}
+              className="w-full bg-black border border-gray-700 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-white/30 transition-colors appearance-none">
+              {achAccounts.map(a => (
+                <option key={a.id} value={a.id}>{a.name} ···{a.mask}</option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <p className="text-xs text-gray-500">No accounts found.</p>
+        )}
+
+        <div>
+          <label className="text-xs text-gray-400 mb-1.5 block">Amount (USD)</label>
+          <div className="bg-black border border-gray-700 rounded-xl px-4 py-3 flex items-center gap-2 focus-within:border-white/30 transition-colors">
+            <span className="text-gray-500 text-sm">$</span>
+            <input type="number" min="1" step="0.01" placeholder="0.00"
+              value={achAmount} onChange={e => setAchAmount(e.target.value)}
+              className="bg-transparent text-2xl font-bold text-white outline-none flex-1 w-0" />
+          </div>
+        </div>
+
+        <div>
+          <label className="text-xs text-gray-400 mb-1.5 block">
+            Legal name <span className="text-gray-600">(required for ACH)</span>
+          </label>
+          <input type="text" placeholder="First Last"
+            value={achLegalName} onChange={e => setAchLegalName(e.target.value)}
+            className="w-full bg-black border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 outline-none focus:border-white/30 transition-colors" />
+        </div>
+
+        {achError && <p className="text-xs text-[#ff5000]">{achError}</p>}
+
+        <button onClick={() => handleAchTransfer(panelType)}
+          disabled={!achCanSubmit || achLoading}
+          className={`w-full py-3 text-sm font-bold rounded-full transition-colors disabled:opacity-40 flex items-center justify-center gap-2 ${
+            panelType === "deposit"
+              ? "bg-[#00c805] text-black hover:bg-[#00b004]"
+              : "bg-white text-black hover:bg-gray-200"
+          }`}>
+          {achLoading
+            ? <><Loader2 className="w-4 h-4 animate-spin" /> Processing…</>
+            : panelType === "deposit"
+            ? achAmountNum >= 1 ? `Deposit $${achAmountNum.toFixed(2)} via ACH` : "Deposit"
+            : achAmountNum >= 1 ? `Withdraw $${achAmountNum.toFixed(2)} via ACH` : "Withdraw"
+          }
+        </button>
+        <p className="text-[10px] text-gray-600 text-center">
+          ACH transfers settle in 1–3 business days.
+        </p>
+      </div>
+    );
+  };
+
+  // ── Not connected ──────────────────────────────────────────────────────────
   if (!address) {
     return (
       <div className="max-w-3xl mx-auto px-6 py-8">
@@ -150,10 +506,8 @@ export function Balance() {
         </div>
         <div className="flex flex-col items-center justify-center py-16 text-center border border-gray-800 rounded-2xl">
           <p className="text-gray-400 text-sm mb-4">{t("balance.connectPrompt")}</p>
-          <button
-            onClick={connect}
-            className="text-sm font-bold text-[#00c805] hover:text-[#00b004] transition-colors"
-          >
+          <button onClick={connect}
+            className="text-sm font-bold text-[#00c805] hover:text-[#00b004] transition-colors">
             {t("balance.connectLink")}
           </button>
         </div>
@@ -161,6 +515,7 @@ export function Balance() {
     );
   }
 
+  // ── Main render ────────────────────────────────────────────────────────────
   return (
     <div className="max-w-3xl mx-auto px-6 py-8">
       <div className="mb-8">
@@ -179,14 +534,25 @@ export function Balance() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => { setShowDepositPanel(p => !p); setDepositError(false); setShowWithdrawPanel(false); }}
+            onClick={() => {
+              setShowDepositPanel(p => !p);
+              setShowWithdrawPanel(false);
+              setTxStep("idle"); setTxErrMsg(null); setSkipApprove(false); setDepositTxHash(undefined);
+              setSelectedAmount(null); setCustomAmount("");
+              resetAchForm();
+            }}
             className="flex items-center gap-2 bg-[#00c805] text-black text-sm font-bold px-5 py-2.5 rounded-full hover:bg-[#00b004] transition-colors"
           >
             <ArrowUpFromLine className="w-4 h-4" />
             {t("overview.deposit")}
           </button>
           <button
-            onClick={() => { setShowWithdrawPanel(p => !p); setWithdrawAmount(""); setShowDepositPanel(false); }}
+            onClick={() => {
+              setShowWithdrawPanel(p => !p);
+              setShowDepositPanel(false);
+              setWithdrawAmount(""); setWdStep("idle"); setWdErrMsg(null);
+              resetAchForm();
+            }}
             disabled={accountBalance <= 0}
             className="flex items-center gap-2 bg-white text-black text-sm font-bold px-5 py-2.5 rounded-full hover:bg-gray-200 transition-colors disabled:opacity-40"
           >
@@ -196,99 +562,223 @@ export function Balance() {
         </div>
       </div>
 
-      {/* Deposit panel */}
+      {/* ── Deposit panel ── */}
       {showDepositPanel && (
-        <div className="bg-[#1E1E24] rounded-2xl px-6 py-5 mb-3 space-y-4">
-          <p className="text-sm font-semibold">{t("overview.depositQuestion")}</p>
-          <div className="flex flex-wrap gap-2">
-            {PRESETS.map(p => (
-              <button
-                key={p}
-                onClick={() => { setSelectedAmount(p); setCustomAmount(""); }}
-                className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${
-                  selectedAmount === p ? "bg-white text-black" : "bg-[#2A2B30] text-gray-300 hover:bg-gray-700"
-                }`}
-              >
-                ${p}
-              </button>
-            ))}
-            <button
-              onClick={() => { setSelectedAmount(null); setCustomAmount(""); }}
-              className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${
-                selectedAmount === null && customAmount === "" ? "bg-white text-black" : "bg-[#2A2B30] text-gray-300 hover:bg-gray-700"
-              }`}
-            >
-              {t("overview.other")}
-            </button>
-          </div>
-          {selectedAmount === null && (
-            <input
-              type="number"
-              min="1"
-              placeholder={t("overview.enterAmount")}
-              value={customAmount}
-              onChange={e => setCustomAmount(e.target.value)}
-              className="w-full bg-[#2A2B30] border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 outline-none focus:border-white/30"
-            />
+        <div className="bg-[#1E1E24] rounded-2xl px-6 py-5 mb-3 space-y-5">
+          {/* Method picker — hide while tx is in progress */}
+          {txStep === "idle" && (
+            <MethodPicker value={depositMethod}
+              onChange={m => { setDepositMethod(m); setTxStep("idle"); setTxErrMsg(null); resetAchForm(); if (m === "ach" && achStatus === "idle") { /* useEffect will fire */ } }} />
           )}
-          {depositError && (
-            <p className="text-red-400 text-sm">{t("overview.depositError")}</p>
+
+          {/* ── Stablecoin deposit ── */}
+          {depositMethod === "stablecoins" && (
+            <>
+              {txStep === "idle" && (
+                <div className="space-y-4">
+                  <div className="flex flex-wrap gap-2">
+                    {STABLECOIN_PRESETS.map(p => (
+                      <button key={p} onClick={() => { setSelectedAmount(p); setCustomAmount(""); }}
+                        className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${selectedAmount === p ? "bg-white text-black" : "bg-[#2A2B30] text-gray-300 hover:bg-gray-700"}`}>
+                        ${p}
+                      </button>
+                    ))}
+                    <button onClick={() => { setSelectedAmount(null); setCustomAmount(""); }}
+                      className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${selectedAmount === null && customAmount === "" ? "bg-white text-black" : "bg-[#2A2B30] text-gray-300 hover:bg-gray-700"}`}>
+                      {t("overview.other")}
+                    </button>
+                  </div>
+                  {selectedAmount === null && (
+                    <input type="number" min="1" placeholder={t("overview.enterAmount")} value={customAmount}
+                      onChange={e => setCustomAmount(e.target.value)}
+                      className="w-full bg-black border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 outline-none focus:border-white/30" />
+                  )}
+                  <div className="flex gap-2">
+                    {(["USDC", "USDT"] as const).map(tok => (
+                      <button key={tok} onClick={() => setSelectedToken(tok)}
+                        className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${selectedToken === tok ? "bg-white text-black" : "bg-[#2A2B30] text-gray-300 hover:bg-gray-700"}`}>
+                        {tok}
+                      </button>
+                    ))}
+                  </div>
+                  {chainId !== 11155111 && depositAmount && depositAmount > 0 && (
+                    <p className="text-xs text-yellow-400">You&apos;ll be prompted to switch to Sepolia.</p>
+                  )}
+                  <button onClick={handleWeb3Deposit} disabled={!depositAmount || depositAmount < 1}
+                    className="w-full py-3 bg-[#00c805] text-black text-sm font-bold rounded-full hover:bg-[#00b004] transition-colors disabled:opacity-40">
+                    {depositAmount && depositAmount >= 1 ? `Deposit ${depositAmount} ${selectedToken}` : t("overview.continue")}
+                  </button>
+                </div>
+              )}
+
+              {txStep !== "idle" && txStep !== "done" && (
+                <div className="space-y-4">
+                  {/* Step 1: Approve — hidden when allowance was already sufficient */}
+                  {!skipApprove && (
+                    <div className="flex items-center gap-3">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-xs font-bold
+                        ${txStep === "depositing" ? "bg-[#00c805] text-black" : txStep === "approving" ? "bg-white text-black" : "bg-[#2A2B30] text-gray-500"}`}>
+                        {txStep === "depositing" ? "✓" : "1"}
+                      </div>
+                      <div>
+                        <p className={`text-sm font-semibold ${txStep === "approving" ? "text-white" : "text-gray-500"}`}>
+                          {`Approve ${selectedToken}`}
+                        </p>
+                        {txStep === "approving" && <p className="text-xs text-gray-400">Waiting for wallet…</p>}
+                        {txStep === "depositing" && <p className="text-xs text-gray-400">Confirmed</p>}
+                      </div>
+                      {txStep === "approving" && <Loader2 className="w-4 h-4 animate-spin text-gray-400 ml-auto" />}
+                    </div>
+                  )}
+                  {/* Step 2 (or 1 if skipped approve): Deposit */}
+                  <div className="flex items-center gap-3">
+                    <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-xs font-bold
+                      ${txStep === "depositing" ? "bg-white text-black" : "bg-[#2A2B30] text-gray-500"}`}>
+                      {skipApprove ? "1" : "2"}
+                    </div>
+                    <div>
+                      <p className={`text-sm font-semibold ${txStep === "depositing" ? "text-white" : "text-gray-500"}`}>
+                        Confirm deposit
+                      </p>
+                      {txStep === "depositing" && <p className="text-xs text-gray-400">Waiting for wallet…</p>}
+                    </div>
+                    {txStep === "depositing" && <Loader2 className="w-4 h-4 animate-spin text-gray-400 ml-auto" />}
+                  </div>
+                  {txStep === "error" && (
+                    <div className="space-y-2">
+                      <p className="text-xs text-[#ff5000]">{txErrMsg ?? "Transaction failed."}</p>
+                      <button onClick={() => { setTxStep("idle"); setTxErrMsg(null); }}
+                        className="text-xs text-gray-400 hover:text-white transition-colors">Try again</button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {txStep === "done" && (
+                <div className="flex flex-col items-center py-4 gap-3 text-center">
+                  <div className="w-10 h-10 rounded-full bg-[#00c805]/15 flex items-center justify-center">
+                    <ArrowDownToLine className="w-5 h-5 text-[#00c805]" />
+                  </div>
+                  <div>
+                    <p className="font-bold text-sm">Deposit confirmed!</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Your balance will update shortly.</p>
+                  </div>
+                  {depositTxHash && (
+                    <a href={`https://sepolia.etherscan.io/tx/${depositTxHash}`} target="_blank" rel="noopener noreferrer"
+                      className="text-xs font-mono text-gray-500 hover:text-white transition-colors break-all">
+                      {depositTxHash.slice(0, 10)}…{depositTxHash.slice(-8)}
+                    </a>
+                  )}
+                  <button onClick={() => { setTxStep("idle"); setShowDepositPanel(false); }}
+                    className="text-xs font-bold text-gray-400 hover:text-white transition-colors">Close</button>
+                </div>
+              )}
+            </>
           )}
-          <button
-            onClick={handleDeposit}
-            disabled={depositLoading || !depositAmount || depositAmount <= 0}
-            className="w-full bg-white text-black text-sm font-bold py-2.5 rounded-full hover:bg-gray-200 transition-colors disabled:opacity-40"
-          >
-            {depositLoading ? t("overview.generatingLink") : depositAmount ? t("overview.continueAmount", { amount: depositAmount }) : t("overview.continue")}
-          </button>
+
+          {/* ── ACH deposit ── */}
+          {depositMethod === "ach" && renderAchSection("deposit")}
         </div>
       )}
 
-      {/* Withdraw panel */}
+      {/* ── Withdraw panel ── */}
       {showWithdrawPanel && (
-        <div className="bg-[#1E1E24] rounded-2xl px-6 py-5 mb-3 space-y-4">
-          <p className="text-sm font-semibold">{t("balance.withdrawQuestion")}</p>
-          <div className="bg-black border border-gray-700 rounded-xl px-4 py-3 focus-within:border-white/30 transition-colors">
-            <div className="flex items-center gap-2">
-              <span className="text-gray-500 text-sm">$</span>
-              <input
-                type="number"
-                min="0"
-                step="any"
-                placeholder="0.00"
-                value={withdrawAmount}
-                onChange={e => setWithdrawAmount(e.target.value)}
-                className="bg-transparent text-2xl font-bold text-white outline-none flex-1 w-0"
-              />
-              <button
-                onClick={() => setWithdrawAmount(maxWithdrawable.toFixed(2))}
-                className="text-xs font-bold text-[#00c805] hover:text-[#00b004] transition-colors shrink-0"
-              >
-                {t("balance.max")}
-              </button>
-            </div>
-          </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-gray-400">{t("balance.buyingPowerRemaining")}</span>
-            <span className={`font-bold ${isOverMax ? "text-[#ff5000]" : "text-gray-300"}`}>
-              ${Math.max(remaining, 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-          </div>
-          {isOverMax && (
-            <p className="text-xs text-[#ff5000]">
-              {t("balance.exceedsBalance", { max: maxWithdrawable.toFixed(2) })}
-            </p>
+        <div className="bg-[#1E1E24] rounded-2xl px-6 py-5 mb-3 space-y-5">
+          <MethodPicker value={withdrawMethod}
+            onChange={m => { setWithdrawMethod(m); setWithdrawAmount(""); setWdStep("idle"); setWdErrMsg(null); resetAchForm(); }} />
+
+          {/* ── Stablecoin withdraw ── */}
+          {withdrawMethod === "stablecoins" && (
+            <>
+              {wdStep === "idle" && (
+                <div className="space-y-4">
+                  {/* Token picker */}
+                  <div className="flex gap-2">
+                    {(["USDC", "USDT"] as const).map(tok => (
+                      <button key={tok} onClick={() => setWithdrawToken(tok)}
+                        className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${
+                          withdrawToken === tok ? "bg-white text-black" : "bg-[#2A2B30] text-gray-300 hover:bg-gray-700"
+                        }`}>
+                        {tok}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="bg-black border border-gray-700 rounded-xl px-4 py-3 focus-within:border-white/30 transition-colors">
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-500 text-sm">$</span>
+                      <input type="number" min="0" step="any" placeholder="0.00"
+                        value={withdrawAmount} onChange={e => setWithdrawAmount(e.target.value)}
+                        className="bg-transparent text-2xl font-bold text-white outline-none flex-1 w-0" />
+                      <button onClick={() => setWithdrawAmount(maxWithdrawable.toFixed(2))}
+                        className="text-xs font-bold text-[#00c805] hover:text-[#00b004] transition-colors shrink-0">
+                        {t("balance.max")}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-400">{t("balance.buyingPowerRemaining")}</span>
+                    <span className={`font-bold ${isOverMax ? "text-[#ff5000]" : "text-gray-300"}`}>
+                      ${Math.max(remaining, 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  {isOverMax && (
+                    <p className="text-xs text-[#ff5000]">
+                      {t("balance.exceedsBalance", { max: maxWithdrawable.toFixed(2) })}
+                    </p>
+                  )}
+                  {wdErrMsg && <p className="text-xs text-[#ff5000]">{wdErrMsg}</p>}
+                  <button onClick={handleStablecoinWithdraw} disabled={!canWithdraw}
+                    className="w-full py-3 bg-white text-black text-sm font-bold rounded-full hover:bg-gray-200 transition-colors disabled:opacity-40">
+                    {withdrawNum > 0
+                      ? `Withdraw ${withdrawNum.toFixed(2)} ${withdrawToken}`
+                      : "Withdraw"}
+                  </button>
+                </div>
+              )}
+
+              {wdStep === "pending" && (
+                <div className="flex items-center gap-3 py-4 text-gray-400 text-sm">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Waiting for confirmation…
+                </div>
+              )}
+
+              {wdStep === "error" && (
+                <div className="space-y-2 py-2">
+                  <p className="text-xs text-[#ff5000]">{wdErrMsg}</p>
+                  <button onClick={() => { setWdStep("idle"); setWdErrMsg(null); }}
+                    className="text-xs text-gray-400 hover:text-white transition-colors">
+                    Try again
+                  </button>
+                </div>
+              )}
+
+              {wdStep === "done" && (
+                <div className="flex flex-col items-center py-4 gap-3 text-center">
+                  <div className="w-10 h-10 rounded-full bg-[#00c805]/15 flex items-center justify-center">
+                    <CheckCircle2 className="w-5 h-5 text-[#00c805]" />
+                  </div>
+                  <div>
+                    <p className="font-bold text-sm">Withdrawal confirmed!</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Your balance will update shortly.</p>
+                  </div>
+                  {withdrawHash && (
+                    <a href={`https://sepolia.etherscan.io/tx/${withdrawHash}`} target="_blank" rel="noopener noreferrer"
+                      className="text-xs font-mono text-gray-500 hover:text-white transition-colors break-all">
+                      {withdrawHash.slice(0, 10)}…{withdrawHash.slice(-8)}
+                    </a>
+                  )}
+                  <button onClick={() => { setWdStep("idle"); setShowWithdrawPanel(false); }}
+                    className="text-xs font-bold text-gray-400 hover:text-white transition-colors">
+                    Close
+                  </button>
+                </div>
+              )}
+            </>
           )}
-          {withdrawError && (
-            <p className="text-xs text-[#ff5000]">{withdrawError}</p>
-          )}
-          <button
-            onClick={handleWithdraw}
-            disabled={!canSubmit || withdrawing}
-            className="w-full py-3 bg-white text-black text-sm font-bold rounded-full hover:bg-gray-200 transition-colors disabled:opacity-40"
-          >
-            {withdrawing ? t("balance.processing") : t("balance.withdrawButton", { amount: withdrawNum > 0 ? withdrawNum.toFixed(2) : "0.00" })}
-          </button>
+
+          {/* ── ACH withdraw ── */}
+          {withdrawMethod === "ach" && renderAchSection("withdraw")}
         </div>
       )}
 
@@ -308,20 +798,14 @@ export function Balance() {
 
       {/* Debit card teaser */}
       <div className="relative bg-[#1E1E24] rounded-2xl overflow-hidden mb-8">
-        {/* Background gradient accent */}
         <div className="absolute inset-0 bg-gradient-to-br from-[#00c805]/10 via-transparent to-transparent pointer-events-none" />
-
         <div className="relative px-6 py-5 flex items-center gap-4">
-          {/* Mini card mockup */}
           <div className="shrink-0 w-12 h-8 rounded-md bg-gradient-to-br from-gray-700 to-gray-900 border border-gray-600 flex flex-col justify-between p-1 shadow-lg">
             <div className="w-4 h-2.5 rounded-sm bg-yellow-400/80" />
             <div className="flex gap-0.5">
-              {[...Array(4)].map((_, i) => (
-                <div key={i} className="w-1 h-1 rounded-full bg-gray-400" />
-              ))}
+              {[...Array(4)].map((_, i) => <div key={i} className="w-1 h-1 rounded-full bg-gray-400" />)}
             </div>
           </div>
-
           <div className="min-w-0">
             <div className="flex items-center gap-2 mb-0.5">
               <p className="font-bold text-sm truncate">{t("balance.debitCardTitle")}</p>
@@ -329,9 +813,7 @@ export function Balance() {
                 {t("balance.debitCardBadge")}
               </span>
             </div>
-            <p className="text-xs text-gray-400 truncate">
-              {t("balance.debitCardDesc")}
-            </p>
+            <p className="text-xs text-gray-400 truncate">{t("balance.debitCardDesc")}</p>
           </div>
         </div>
       </div>
@@ -346,11 +828,7 @@ export function Balance() {
             <span className="text-sm">{t("balance.loading")}</span>
           </div>
         )}
-
-        {error && (
-          <p className="text-sm text-[#ff5000] text-center py-8">{t("balance.loadError")}</p>
-        )}
-
+        {error && <p className="text-sm text-[#ff5000] text-center py-8">{t("balance.loadError")}</p>}
         {!loading && !error && orders.length === 0 && (
           <div className="flex flex-col items-center justify-center py-10 text-center border border-gray-800 rounded-2xl">
             <p className="text-gray-400 text-sm">{t("balance.noOrders")}</p>
@@ -366,23 +844,17 @@ export function Balance() {
               const isBuy        = !isCash && (order.side === "buy" || (!order.side && order.estimatedCost !== undefined));
               const value        = order.tradeValue ?? order.estimatedCost ?? 0;
               const qty          = parseFloat(order.qty);
-
-              // Icon + colour
-              const iconColor = isDeposit ? "bg-[#00c805]/10 text-[#00c805]"
-                              : isWithdrawal ? "bg-[#ff5000]/10 text-[#ff5000]"
-                              : isBuy ? "bg-[#00c805]/10 text-[#00c805]"
-                              : "bg-[#ff5000]/10 text-[#ff5000]";
-              const icon = isDeposit    ? <ArrowDownCircle className="w-4 h-4" />
-                         : isWithdrawal ? <ArrowUpCircle   className="w-4 h-4" />
-                         : isBuy        ? <ArrowUpRight    className="w-4 h-4" />
-                         :                <ArrowDownLeft   className="w-4 h-4" />;
-
-              // Value sign + colour
-              const valueColor = isDeposit ? "text-[#00c805]"
-                               : isWithdrawal ? "text-[#ff5000]"
-                               : isBuy ? "text-[#ff5000]" : "text-[#00c805]";
-              const valueSign  = isDeposit ? "+" : "−";
-
+              const iconColor    = isDeposit    ? "bg-[#00c805]/10 text-[#00c805]"
+                                 : isWithdrawal ? "bg-[#ff5000]/10 text-[#ff5000]"
+                                 : isBuy        ? "bg-[#00c805]/10 text-[#00c805]"
+                                 :                "bg-[#ff5000]/10 text-[#ff5000]";
+              const icon         = isDeposit    ? <ArrowDownCircle className="w-4 h-4" />
+                                 : isWithdrawal ? <ArrowUpCircle   className="w-4 h-4" />
+                                 : isBuy        ? <ArrowUpRight    className="w-4 h-4" />
+                                 :                <ArrowDownLeft   className="w-4 h-4" />;
+              const valueColor   = isDeposit    ? "text-[#00c805]"
+                                 : isWithdrawal ? "text-[#ff5000]"
+                                 : isBuy        ? "text-[#ff5000]" : "text-[#00c805]";
               return (
                 <div key={order.id} className="p-5 hover:bg-gray-800/40 transition-colors">
                   <div className="flex items-center gap-4">
@@ -391,37 +863,25 @@ export function Balance() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
-                        {isCash ? (
-                          <span className="font-bold text-sm">{order.ticker}</span>
-                        ) : (
-                          <Link
-                            to={`/stock/${order.ticker}`}
-                            className="font-bold text-sm hover:text-[#00c805] transition-colors"
-                          >
-                            {order.ticker}
-                          </Link>
-                        )}
+                        {isCash
+                          ? <span className="font-bold text-sm">{order.ticker}</span>
+                          : <Link to={`/stock/${order.ticker}`} className="font-bold text-sm hover:text-[#00c805] transition-colors">{order.ticker}</Link>
+                        }
                         {!isCash && (
-                          <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${
-                            isBuy ? "bg-[#00c805]/15 text-[#00c805]" : "bg-[#ff5000]/15 text-[#ff5000]"
-                          }`}>
+                          <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${isBuy ? "bg-[#00c805]/15 text-[#00c805]" : "bg-[#ff5000]/15 text-[#ff5000]"}`}>
                             {isBuy ? "BUY" : "SELL"}
                           </span>
                         )}
                       </div>
                       {order.alpacaOrderId && (
-                        <p className="text-xs text-gray-500 font-mono">
-                          ID: {order.alpacaOrderId.split("-")[0]}…
-                        </p>
+                        <p className="text-xs text-gray-500 font-mono">ID: {order.alpacaOrderId.split("-")[0]}…</p>
                       )}
                     </div>
                     <div className="text-right shrink-0">
                       <p className={`font-bold text-sm ${valueColor}`}>
-                        {valueSign}${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {isDeposit ? "+" : "−"}${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </p>
-                      {!isCash && (
-                        <p className="text-xs text-gray-400">{t("balance.shares", { count: qty })}</p>
-                      )}
+                      {!isCash && <p className="text-xs text-gray-400">{t("balance.shares", { count: qty })}</p>}
                       <p className="text-xs text-gray-500 mt-0.5">{relativeTime(order.createdAt)}</p>
                     </div>
                   </div>

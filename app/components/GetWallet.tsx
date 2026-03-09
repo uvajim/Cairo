@@ -34,10 +34,8 @@ export function GetWallet() {
       <div className="bg-[#1E1E24] rounded-2xl overflow-hidden mb-6">
         <div className="px-8 py-12 flex flex-col items-center text-center">
           {/* App icon */}
-          <div className="w-20 h-20 bg-white rounded-2xl flex items-center justify-center mb-6 shadow-lg">
-            <svg width="44" height="44" viewBox="0 0 24 24" fill="black">
-              <path d="M12 2L2 22H22L12 2ZM12 6L18 18H6L12 6Z" />
-            </svg>
+          <div className="w-20 h-20 rounded-2xl overflow-hidden mb-6 shadow-lg">
+            <img src="/maritime-app-logo.png" alt="Maritime" className="w-full h-full object-cover" />
           </div>
 
           <h3 className="text-2xl font-bold mb-2">{t("app.appName")}</h3>

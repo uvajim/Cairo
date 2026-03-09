@@ -7,7 +7,8 @@
     "searchPlaceholder": "ابحث عن أسهم أو شركة…",
     "connectWallet": "ربط المحفظة",
     "connecting": "جارٍ الاتصال…",
-    "disconnect": "قطع الاتصال"
+    "disconnect": "قطع الاتصال",
+    "banking": "البنك"
   },
   "overview": {
     "title": "المحفظة",
