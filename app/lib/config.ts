@@ -24,6 +24,8 @@ export const STABLECOIN_ADDRESSES: Record<string, string> = {
 export const MARITIME_DEPOSIT_CONTRACT =
   process.env.NEXT_PUBLIC_MARITIME_DEPOSIT_CONTRACT as `0x${string}`;
 
+export const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? 11155111);
+
 export const SEPOLIA_STABLECOINS: Record<string, `0x${string}`> = {
   USDC: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
   USDT: "0x7169D38820dfd117C3FA1f22a697dBA58d90BA06",

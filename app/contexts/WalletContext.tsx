@@ -15,7 +15,7 @@ import {
 } from "wagmi";
 import { formatUnits } from "viem";
 import { useAppKit } from "@reown/appkit/react";
-import { MARITIME_DEPOSIT_CONTRACT } from "../lib/config";
+import { MARITIME_DEPOSIT_CONTRACT, CHAIN_ID } from "../lib/config";
 
 // Minimal ABI — only balanceOf needed
 const MDT_ABI = [
@@ -58,7 +58,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const { data: mdtRaw, refetch: refetchMdt } = useReadContract({
     address:  MARITIME_DEPOSIT_CONTRACT,
     abi:      MDT_ABI,
-    chainId:  11155111,
+    chainId:  CHAIN_ID,
     functionName: "balanceOf",
     args:     wagmiAddress ? [wagmiAddress] : undefined,
     query:    { enabled: !!wagmiAddress, refetchInterval: 30_000 },
