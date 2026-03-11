@@ -419,13 +419,27 @@ export function Balance() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.reason ?? data.error ?? "Transfer failed.");
       } else {
-        const res = await fetch(`${BACKEND_URL}/api/plaid/transfer/withdraw`, {
+        const intentTimestamp = BigInt(Math.floor(Date.now() / 1000));
+        const signature = await signTypedDataAsync({
+          domain:      DEPOSIT_INTENT_DOMAIN,
+          types:       DEPOSIT_INTENT_TYPES,
+          primaryType: "DepositIntent",
+          message: {
+            walletAddress: address as `0x${string}`,
+            amount:        amountStr,
+            timestamp:     intentTimestamp,
+          },
+        });
+        const res = await fetch(`${BACKEND_URL}/api/redeem`, {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             walletAddress: address,
             accountId: achAccountId,
             amount: amountStr,
             legalName: achLegalName.trim(),
+            signature,
+            intentTimestamp: intentTimestamp.toString(),
+            description: "From Cairo",
           }),
         });
         const data = await res.json();

@@ -23,7 +23,7 @@ export const STABLECOIN_ADDRESSES: Record<string, string> = {
 // Set NEXT_PUBLIC_MARITIME_DEPOSIT_CONTRACT in your .env.local after deploying.
 export const MARITIME_DEPOSIT_CONTRACT =
   (process.env.NEXT_PUBLIC_MARITIME_DEPOSIT_CONTRACT ??
-   "0x8B8D2db1b4b234fe3EDD4704159Bd798944957b5") as `0x${string}`;
+   "0xb6bea061A920E5471b1E1D3c1e1c9E62a0fE7D51") as `0x${string}`;
 
 export const SEPOLIA_STABLECOINS: Record<string, `0x${string}`> = {
   USDC: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
@@ -95,7 +95,6 @@ export const MARITIME_DEPOSIT_ABI = [
 export const DEPOSIT_INTENT_DOMAIN = {
   name:              "Cairo",
   version:           "1",
-  chainId:           11155111n,
   verifyingContract: MARITIME_DEPOSIT_CONTRACT,
 } as const;
 

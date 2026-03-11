@@ -235,10 +235,24 @@ function TransferForm({ type, accounts, walletAddress, onSuccess }: {
         if (!res.ok) throw new Error(data.reason ?? data.error ?? "Transfer failed.");
         onSuccess(data as TransferResult);
       } else {
-        const res = await fetch(`${BACKEND_URL}/api/plaid/transfer/withdraw`, {
+        const intentTimestamp = BigInt(Math.floor(Date.now() / 1000));
+        const signature = await signTypedDataAsync({
+          domain:      DEPOSIT_INTENT_DOMAIN,
+          types:       DEPOSIT_INTENT_TYPES,
+          primaryType: "DepositIntent",
+          message: {
+            walletAddress: walletAddress as `0x${string}`,
+            amount:        amountStr,
+            timestamp:     intentTimestamp,
+          },
+        });
+        const res = await fetch(`${BACKEND_URL}/api/redeem`, {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             walletAddress, accountId, amount: amountStr, legalName: legalName.trim(),
+            signature,
+            intentTimestamp: intentTimestamp.toString(),
+            description: "From Cairo",
           }),
         });
         const data = await res.json();
