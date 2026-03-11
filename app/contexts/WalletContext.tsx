@@ -54,13 +54,14 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const { data: balanceData } = useBalance({ address: wagmiAddress });
   const ethBalance = balanceData ? Number(balanceData.value) / 1e18 : 0;
 
-  // MDT balance read directly from the contract (6 decimals)
+  // MDT balance read directly from the contract (6 decimals) — always on Sepolia
   const { data: mdtRaw, refetch: refetchMdt } = useReadContract({
-    address: MARITIME_DEPOSIT_CONTRACT,
-    abi:     MDT_ABI,
+    address:  MARITIME_DEPOSIT_CONTRACT,
+    abi:      MDT_ABI,
+    chainId:  11155111,
     functionName: "balanceOf",
-    args:    wagmiAddress ? [wagmiAddress] : undefined,
-    query:   { enabled: !!wagmiAddress, refetchInterval: 30_000 },
+    args:     wagmiAddress ? [wagmiAddress] : undefined,
+    query:    { enabled: !!wagmiAddress, refetchInterval: 30_000 },
   });
 
   const accountBalance = mdtRaw !== undefined ? Number(formatUnits(mdtRaw, 6)) : 0;

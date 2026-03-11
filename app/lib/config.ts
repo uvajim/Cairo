@@ -22,8 +22,7 @@ export const STABLECOIN_ADDRESSES: Record<string, string> = {
 // The contract address is also the MDT token address (no separate token contract).
 // Set NEXT_PUBLIC_MARITIME_DEPOSIT_CONTRACT in your .env.local after deploying.
 export const MARITIME_DEPOSIT_CONTRACT =
-  (process.env.NEXT_PUBLIC_MARITIME_DEPOSIT_CONTRACT ??
-   "0xb6bea061A920E5471b1E1D3c1e1c9E62a0fE7D51") as `0x${string}`;
+  process.env.NEXT_PUBLIC_MARITIME_DEPOSIT_CONTRACT as `0x${string}`;
 
 export const SEPOLIA_STABLECOINS: Record<string, `0x${string}`> = {
   USDC: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
