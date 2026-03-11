@@ -91,6 +91,22 @@ export const MARITIME_DEPOSIT_ABI = [
   },
 ] as const;
 
+// ── EIP-712 DepositIntent (shared by all deposit UI + backend verification) ───
+export const DEPOSIT_INTENT_DOMAIN = {
+  name:              "Cairo",
+  version:           "1",
+  chainId:           11155111n,
+  verifyingContract: MARITIME_DEPOSIT_CONTRACT,
+} as const;
+
+export const DEPOSIT_INTENT_TYPES = {
+  DepositIntent: [
+    { name: "walletAddress", type: "address" },
+    { name: "amount",        type: "string"  },
+    { name: "timestamp",     type: "uint256" },
+  ],
+} as const;
+
 // Friendly messages for contract revert names
 export const CONTRACT_ERROR_MESSAGES: Record<string, string> = {
   UnsupportedToken:         "Only USDC and USDT are supported.",

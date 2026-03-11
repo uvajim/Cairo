@@ -8,14 +8,15 @@ import {
 import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
 import { usePlaidLink } from "react-plaid-link";
-import { useWriteContract, useWaitForTransactionReceipt, useChainId, useSwitchChain, usePublicClient } from "wagmi";
-import { parseUnits, pad, maxUint256 } from "viem";
+import { useWriteContract, useWaitForTransactionReceipt, useChainId, useSwitchChain, usePublicClient, useSignTypedData } from "wagmi";
+import { parseUnits, pad, maxUint256, formatUnits, parseAbiItem } from "viem";
 import { useWallet } from "../contexts/WalletContext";
 import {
   ACTIVITY_URL, BACKEND_URL,
   MARITIME_DEPOSIT_CONTRACT, SEPOLIA_STABLECOINS,
   ERC20_APPROVE_ABI, MARITIME_DEPOSIT_ABI, MARITIME_WITHDRAW_ABI,
   CONTRACT_ERROR_MESSAGES,
+  DEPOSIT_INTENT_DOMAIN, DEPOSIT_INTENT_TYPES,
 } from "../lib/config";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -39,9 +40,48 @@ interface AchAccount {
   subtype: string;
 }
 
+interface AchTransfer {
+  transferId: string;
+  type: "debit" | "credit";
+  amount: string;
+  status: string;
+  description?: string;
+  createdAt: string;
+}
+
+interface FeedItem {
+  id: string;
+  kind: "order" | "ach" | "mdt";
+  // order fields
+  ticker?: string;
+  side?: "buy" | "sell";
+  qty?: string;
+  alpacaOrderId?: string;
+  tradeValue?: number;
+  // ach fields
+  achDirection?: "in" | "out";
+  achStatus?: string;
+  // mdt fields
+  mdtDirection?: "in" | "out";
+  txHash?: string;
+  // common
+  amount: number;
+  createdAt: string;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const activityCache: { address: string; orders: Order[] } = { address: "", orders: [] };
+const feedCache: { address: string; items: FeedItem[] } = { address: "", items: [] };
+const achAccountCache: { address: string; accounts: AchAccount[]; linked: boolean } = {
+  address: "", accounts: [], linked: false,
+};
+
+const DEPOSITED_EVENT = parseAbiItem(
+  "event Deposited(address indexed user, address indexed token, uint256 amount, bytes32 userId, uint256 timestamp)"
+);
+const WITHDRAWN_EVENT = parseAbiItem(
+  "event Withdrawn(address indexed user, address indexed token, uint256 amount, uint256 timestamp)"
+);
 
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -150,6 +190,7 @@ export function Balance() {
   const [depositTxHash, setDepositTxHash] = useState<`0x${string}` | undefined>();
 
   const { writeContractAsync } = useWriteContract();
+  const { signTypedDataAsync } = useSignTypedData();
   const chainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
   const sepoliaClient = usePublicClient({ chainId: 11155111 });
@@ -272,7 +313,8 @@ export function Balance() {
   const achAmountNum = parseFloat(achAmount);
   const achCanSubmit = achAccountId && achLegalName.trim().length >= 2 && achAmountNum >= 1;
 
-  // Check link status when ACH tab is selected in either panel
+  // Load ACH accounts when the ACH tab is first opened.
+  // Uses a module-level cache so navigating away and back is instant.
   useEffect(() => {
     if (!address || achStatus !== "idle") return;
     const needsCheck =
@@ -280,26 +322,33 @@ export function Balance() {
       (showWithdrawPanel && withdrawMethod === "ach");
     if (!needsCheck) return;
 
+    // Serve from cache immediately if available
+    if (achAccountCache.address === address) {
+      if (achAccountCache.linked) {
+        setAchAccounts(achAccountCache.accounts);
+        if (achAccountCache.accounts.length > 0) setAchAccountId(achAccountCache.accounts[0].id);
+        setAchStatus("linked");
+      } else {
+        setAchStatus("unlinked");
+      }
+      return;
+    }
+
+    // Cache miss — single fetch (accounts endpoint returns 404 if not linked)
     setAchStatus("checking");
-    fetch(`${BACKEND_URL}/api/plaid/linked`, {
+    fetch(`${BACKEND_URL}/api/plaid/accounts`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ walletAddress: address }),
     })
       .then(r => r.json())
-      .then(async data => {
-        if (data.linked) {
-          const acctRes  = await fetch(`${BACKEND_URL}/api/plaid/accounts`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ walletAddress: address }),
-          });
-          const acctData = await acctRes.json();
-          const list: AchAccount[] = acctData.accounts ?? [];
-          setAchAccounts(list);
-          if (list.length > 0) setAchAccountId(list[0].id);
-          setAchStatus("linked");
-        } else {
-          setAchStatus("unlinked");
-        }
+      .then(data => {
+        const list: AchAccount[] = data.accounts ?? [];
+        achAccountCache.address  = address;
+        achAccountCache.linked   = list.length > 0;
+        achAccountCache.accounts = list;
+        setAchAccounts(list);
+        if (list.length > 0) setAchAccountId(list[0].id);
+        setAchStatus(list.length > 0 ? "linked" : "unlinked");
       })
       .catch(() => setAchStatus("unlinked"));
   }, [showDepositPanel, showWithdrawPanel, depositMethod, withdrawMethod, achStatus, address]);
@@ -329,6 +378,9 @@ export function Balance() {
       });
       const data = await res.json();
       const list: AchAccount[] = data.accounts ?? [];
+      achAccountCache.address  = address;
+      achAccountCache.linked   = true;
+      achAccountCache.accounts = list;
       setAchAccounts(list);
       if (list.length > 0) setAchAccountId(list[0].id);
     } catch { /* keep empty */ }
@@ -338,21 +390,47 @@ export function Balance() {
   const handleAchTransfer = async (type: "deposit" | "withdraw") => {
     if (!achCanSubmit || !address) return;
     setAchLoading(true); setAchError(null);
-    const endpoint = type === "deposit"
-      ? `${BACKEND_URL}/api/plaid/transfer/deposit`
-      : `${BACKEND_URL}/api/plaid/transfer/withdraw`;
     try {
-      const res  = await fetch(endpoint, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          walletAddress: address,
-          accountId: achAccountId,
-          amount: achAmountNum.toFixed(2),
-          legalName: achLegalName.trim(),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.reason ?? data.error ?? "Transfer failed.");
+      const amountStr = achAmountNum.toFixed(2);
+
+      if (type === "deposit") {
+        const intentTimestamp = BigInt(Math.floor(Date.now() / 1000));
+        const signature = await signTypedDataAsync({
+          domain:      DEPOSIT_INTENT_DOMAIN,
+          types:       DEPOSIT_INTENT_TYPES,
+          primaryType: "DepositIntent",
+          message: {
+            walletAddress: address as `0x${string}`,
+            amount:        amountStr,
+            timestamp:     intentTimestamp,
+          },
+        });
+        const res = await fetch(`${BACKEND_URL}/api/plaid/transfer/deposit`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            walletAddress: address,
+            accountId: achAccountId,
+            amount: amountStr,
+            legalName: achLegalName.trim(),
+            intentTimestamp: intentTimestamp.toString(),
+            signature,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.reason ?? data.error ?? "Transfer failed.");
+      } else {
+        const res = await fetch(`${BACKEND_URL}/api/plaid/transfer/withdraw`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            walletAddress: address,
+            accountId: achAccountId,
+            amount: amountStr,
+            legalName: achLegalName.trim(),
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.reason ?? data.error ?? "Transfer failed.");
+      }
       setAchSuccess(true);
     } catch (err: unknown) {
       setAchError(err instanceof Error ? err.message : "Transfer failed.");
@@ -364,29 +442,101 @@ export function Balance() {
     setAchSuccess(false); setAchError(null);
   };
 
-  // ── Activity ───────────────────────────────────────────────────────────────
-  const [orders,  setOrders]  = useState<Order[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState<string | null>(null);
+  // ── Activity feed (orders + ACH transfers + on-chain MDT events) ──────────
+  const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
+  const [loading,   setLoading]   = useState(false);
+  const [error,     setError]     = useState<string | null>(null);
 
   useEffect(() => {
-    if (!address) { setOrders([]); return; }
-    if (activityCache.address === address && activityCache.orders.length > 0) {
-      setOrders(activityCache.orders); return;
+    if (!address) { setFeedItems([]); return; }
+    if (feedCache.address === address && feedCache.items.length > 0) {
+      setFeedItems(feedCache.items); return;
     }
     setLoading(true); setError(null);
-    fetch(ACTIVITY_URL, {
+
+    const client = sepoliaClient; // capture current value
+
+    const fetchOrders = fetch(ACTIVITY_URL, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ walletAddress: address }),
-    })
-      .then(r => r.json())
-      .then(data => {
-        const o = data.executedOrders ?? [];
-        activityCache.address = address; activityCache.orders = o;
-        setOrders(o);
+    }).then(r => r.json()).then(d => (d.executedOrders ?? []) as Order[]).catch(() => [] as Order[]);
+
+    const fetchAch = fetch(`${BACKEND_URL}/api/plaid/transfer/history`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ walletAddress: address }),
+    }).then(r => r.json()).then(d => (d.transfers ?? []) as AchTransfer[]).catch(() => [] as AchTransfer[]);
+
+    const fetchMdtDeposits = client
+      ? client.getLogs({ address: MARITIME_DEPOSIT_CONTRACT, event: DEPOSITED_EVENT,
+          args: { user: address as `0x${string}` }, fromBlock: "earliest" }).catch(() => [])
+      : Promise.resolve([]);
+
+    const fetchMdtWithdraws = client
+      ? client.getLogs({ address: MARITIME_DEPOSIT_CONTRACT, event: WITHDRAWN_EVENT,
+          args: { user: address as `0x${string}` }, fromBlock: "earliest" }).catch(() => [])
+      : Promise.resolve([]);
+
+    Promise.all([fetchOrders, fetchAch, fetchMdtDeposits, fetchMdtWithdraws])
+      .then(([orders, achTransfers, depositedLogs, withdrawnLogs]) => {
+        const items: FeedItem[] = [];
+
+        for (const o of orders) {
+          items.push({
+            id: `order-${o.id}`,
+            kind: "order",
+            ticker: o.ticker,
+            side: o.side,
+            qty: o.qty,
+            alpacaOrderId: o.alpacaOrderId,
+            tradeValue: o.tradeValue ?? o.estimatedCost,
+            amount: o.tradeValue ?? o.estimatedCost ?? 0,
+            createdAt: o.createdAt,
+          });
+        }
+
+        for (const t of achTransfers) {
+          items.push({
+            id: `ach-${t.transferId}`,
+            kind: "ach",
+            achDirection: t.type === "debit" ? "in" : "out",
+            achStatus: t.status,
+            amount: parseFloat(t.amount),
+            createdAt: t.createdAt,
+          });
+        }
+
+        for (const log of depositedLogs) {
+          const args = (log as { args?: { amount?: bigint; timestamp?: bigint }; transactionHash?: `0x${string}` }).args;
+          items.push({
+            id: `mdt-d-${(log as { transactionHash?: string }).transactionHash ?? Math.random()}`,
+            kind: "mdt",
+            mdtDirection: "in",
+            amount: args?.amount != null ? Number(formatUnits(args.amount, 6)) : 0,
+            createdAt: args?.timestamp != null ? new Date(Number(args.timestamp) * 1000).toISOString() : new Date().toISOString(),
+            txHash: (log as { transactionHash?: `0x${string}` }).transactionHash ?? undefined,
+          });
+        }
+
+        for (const log of withdrawnLogs) {
+          const args = (log as { args?: { amount?: bigint; timestamp?: bigint }; transactionHash?: `0x${string}` }).args;
+          items.push({
+            id: `mdt-w-${(log as { transactionHash?: string }).transactionHash ?? Math.random()}`,
+            kind: "mdt",
+            mdtDirection: "out",
+            amount: args?.amount != null ? Number(formatUnits(args.amount, 6)) : 0,
+            createdAt: args?.timestamp != null ? new Date(Number(args.timestamp) * 1000).toISOString() : new Date().toISOString(),
+            txHash: (log as { transactionHash?: `0x${string}` }).transactionHash ?? undefined,
+          });
+        }
+
+        items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        feedCache.address = address;
+        feedCache.items = items;
+        setFeedItems(items);
       })
       .catch(() => setError("loadError"))
       .finally(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address]);
 
   // ── ACH section (shared JSX used in both panels) ──────────────────────────
@@ -438,17 +588,45 @@ export function Balance() {
       </div>
     );
 
+    // If the user picked "Add bank account", show Plaid Link inline
+    if (achLinkToken) return (
+      <div className="space-y-3 py-2">
+        {achLinkError && <p className="text-xs text-[#ff5000]">{achLinkError}</p>}
+        <PlaidLinkInner
+          token={achLinkToken}
+          walletAddress={address!}
+          onLinked={onBankLinked}
+          onError={msg => { setAchLinkError(msg); setAchLinkToken(null); }}
+        />
+      </div>
+    );
+
     return (
       <div className="space-y-3">
         {achAccounts.length > 0 ? (
           <div>
             <label className="text-xs text-gray-400 mb-1.5 block">Account</label>
-            <select value={achAccountId} onChange={e => setAchAccountId(e.target.value)}
+            <select
+              value={achAccountId}
+              onChange={e => {
+                if (e.target.value === "__add__") {
+                  startPlaidLink();
+                } else {
+                  setAchAccountId(e.target.value);
+                }
+              }}
               className="w-full bg-black border border-gray-700 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-white/30 transition-colors appearance-none">
               {achAccounts.map(a => (
                 <option key={a.id} value={a.id}>{a.name} ···{a.mask}</option>
               ))}
+              <option value="__add__">+ Add bank account</option>
             </select>
+            {achLinkLoading && (
+              <div className="flex items-center gap-2 mt-1.5 text-xs text-gray-400">
+                <Loader2 className="w-3 h-3 animate-spin" /> Connecting to Plaid…
+              </div>
+            )}
+            {achLinkError && <p className="text-xs text-[#ff5000] mt-1">{achLinkError}</p>}
           </div>
         ) : (
           <p className="text-xs text-gray-500">No accounts found.</p>
@@ -829,64 +1007,130 @@ export function Balance() {
           </div>
         )}
         {error && <p className="text-sm text-[#ff5000] text-center py-8">{t("balance.loadError")}</p>}
-        {!loading && !error && orders.length === 0 && (
+        {!loading && !error && feedItems.length === 0 && (
           <div className="flex flex-col items-center justify-center py-10 text-center border border-gray-800 rounded-2xl">
             <p className="text-gray-400 text-sm">{t("balance.noOrders")}</p>
           </div>
         )}
 
-        {orders.length > 0 && (
+        {feedItems.length > 0 && (
           <div className="bg-[#1A1B1F] rounded-2xl overflow-hidden divide-y divide-gray-800">
-            {orders.map(order => {
-              const isDeposit    = order.ticker === "Deposit";
-              const isWithdrawal = order.ticker === "Withdrawal";
-              const isCash       = isDeposit || isWithdrawal;
-              const isBuy        = !isCash && (order.side === "buy" || (!order.side && order.estimatedCost !== undefined));
-              const value        = order.tradeValue ?? order.estimatedCost ?? 0;
-              const qty          = parseFloat(order.qty);
-              const iconColor    = isDeposit    ? "bg-[#00c805]/10 text-[#00c805]"
-                                 : isWithdrawal ? "bg-[#ff5000]/10 text-[#ff5000]"
-                                 : isBuy        ? "bg-[#00c805]/10 text-[#00c805]"
-                                 :                "bg-[#ff5000]/10 text-[#ff5000]";
-              const icon         = isDeposit    ? <ArrowDownCircle className="w-4 h-4" />
-                                 : isWithdrawal ? <ArrowUpCircle   className="w-4 h-4" />
-                                 : isBuy        ? <ArrowUpRight    className="w-4 h-4" />
-                                 :                <ArrowDownLeft   className="w-4 h-4" />;
-              const valueColor   = isDeposit    ? "text-[#00c805]"
-                                 : isWithdrawal ? "text-[#ff5000]"
-                                 : isBuy        ? "text-[#ff5000]" : "text-[#00c805]";
-              return (
-                <div key={order.id} className="p-5 hover:bg-gray-800/40 transition-colors">
-                  <div className="flex items-center gap-4">
-                    <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${iconColor}`}>
-                      {icon}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        {isCash
-                          ? <span className="font-bold text-sm">{order.ticker}</span>
-                          : <Link to={`/stock/${order.ticker}`} className="font-bold text-sm hover:text-[#00c805] transition-colors">{order.ticker}</Link>
-                        }
-                        {!isCash && (
-                          <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${isBuy ? "bg-[#00c805]/15 text-[#00c805]" : "bg-[#ff5000]/15 text-[#ff5000]"}`}>
-                            {isBuy ? "BUY" : "SELL"}
-                          </span>
+            {feedItems.map(item => {
+              // ── Stock/cash orders ────────────────────────────────────────────
+              if (item.kind === "order") {
+                const isDeposit    = item.ticker === "Deposit";
+                const isWithdrawal = item.ticker === "Withdrawal";
+                const isCash       = isDeposit || isWithdrawal;
+                const isBuy        = !isCash && (item.side === "buy" || (!item.side && item.tradeValue !== undefined));
+                const qty          = parseFloat(item.qty ?? "0");
+                const iconColor    = isDeposit    ? "bg-[#00c805]/10 text-[#00c805]"
+                                   : isWithdrawal ? "bg-[#ff5000]/10 text-[#ff5000]"
+                                   : isBuy        ? "bg-[#00c805]/10 text-[#00c805]"
+                                   :                "bg-[#ff5000]/10 text-[#ff5000]";
+                const icon         = isDeposit    ? <ArrowDownCircle className="w-4 h-4" />
+                                   : isWithdrawal ? <ArrowUpCircle   className="w-4 h-4" />
+                                   : isBuy        ? <ArrowUpRight    className="w-4 h-4" />
+                                   :                <ArrowDownLeft   className="w-4 h-4" />;
+                const valueColor   = isDeposit    ? "text-[#00c805]"
+                                   : isWithdrawal ? "text-[#ff5000]"
+                                   : isBuy        ? "text-[#ff5000]" : "text-[#00c805]";
+                return (
+                  <div key={item.id} className="p-5 hover:bg-gray-800/40 transition-colors">
+                    <div className="flex items-center gap-4">
+                      <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${iconColor}`}>{icon}</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          {isCash
+                            ? <span className="font-bold text-sm">{item.ticker}</span>
+                            : <Link to={`/stock/${item.ticker}`} className="font-bold text-sm hover:text-[#00c805] transition-colors">{item.ticker}</Link>
+                          }
+                          {!isCash && (
+                            <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${isBuy ? "bg-[#00c805]/15 text-[#00c805]" : "bg-[#ff5000]/15 text-[#ff5000]"}`}>
+                              {isBuy ? "BUY" : "SELL"}
+                            </span>
+                          )}
+                        </div>
+                        {item.alpacaOrderId && (
+                          <p className="text-xs text-gray-500 font-mono">ID: {item.alpacaOrderId.split("-")[0]}…</p>
                         )}
                       </div>
-                      {order.alpacaOrderId && (
-                        <p className="text-xs text-gray-500 font-mono">ID: {order.alpacaOrderId.split("-")[0]}…</p>
-                      )}
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className={`font-bold text-sm ${valueColor}`}>
-                        {isDeposit ? "+" : "−"}${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </p>
-                      {!isCash && <p className="text-xs text-gray-400">{t("balance.shares", { count: qty })}</p>}
-                      <p className="text-xs text-gray-500 mt-0.5">{relativeTime(order.createdAt)}</p>
+                      <div className="text-right shrink-0">
+                        <p className={`font-bold text-sm ${valueColor}`}>
+                          {isDeposit ? "+" : "−"}${item.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </p>
+                        {!isCash && <p className="text-xs text-gray-400">{t("balance.shares", { count: qty })}</p>}
+                        <p className="text-xs text-gray-500 mt-0.5">{relativeTime(item.createdAt)}</p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
+                );
+              }
+
+              // ── ACH bank transfers ───────────────────────────────────────────
+              if (item.kind === "ach") {
+                const isIn     = item.achDirection === "in";
+                const settled  = item.achStatus === "settled" || item.achStatus === "funds_available";
+                return (
+                  <div key={item.id} className="p-5 hover:bg-gray-800/40 transition-colors">
+                    <div className="flex items-center gap-4">
+                      <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${isIn ? "bg-[#00c805]/10 text-[#00c805]" : "bg-[#ff5000]/10 text-[#ff5000]"}`}>
+                        <Landmark className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-bold text-sm">{isIn ? "ACH Deposit" : "ACH Withdrawal"}</span>
+                          {!settled && (
+                            <span className="text-xs font-semibold px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-400">PENDING</span>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-500">Settles in 1–3 business days</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className={`font-bold text-sm ${isIn ? "text-[#00c805]" : "text-[#ff5000]"}`}>
+                          {isIn ? "+" : "−"}${item.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">{relativeTime(item.createdAt)}</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
+              // ── On-chain MDT events ──────────────────────────────────────────
+              if (item.kind === "mdt") {
+                const isIn = item.mdtDirection === "in";
+                return (
+                  <div key={item.id} className="p-5 hover:bg-gray-800/40 transition-colors">
+                    <div className="flex items-center gap-4">
+                      <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${isIn ? "bg-[#00c805]/10 text-[#00c805]" : "bg-[#ff5000]/10 text-[#ff5000]"}`}>
+                        <Wallet className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-bold text-sm">{isIn ? "Crypto Deposit" : "Crypto Withdrawal"}</span>
+                          <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${isIn ? "bg-[#00c805]/15 text-[#00c805]" : "bg-[#ff5000]/15 text-[#ff5000]"}`}>
+                            {isIn ? "+MDT" : "−MDT"}
+                          </span>
+                        </div>
+                        {item.txHash && (
+                          <a href={`https://sepolia.etherscan.io/tx/${item.txHash}`} target="_blank" rel="noopener noreferrer"
+                            className="text-xs font-mono text-gray-500 hover:text-white transition-colors">
+                            {item.txHash.slice(0, 8)}…{item.txHash.slice(-6)}
+                          </a>
+                        )}
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className={`font-bold text-sm ${isIn ? "text-[#00c805]" : "text-[#ff5000]"}`}>
+                          {isIn ? "+" : "−"}{item.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MDT
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">{relativeTime(item.createdAt)}</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
+              return null;
             })}
           </div>
         )}

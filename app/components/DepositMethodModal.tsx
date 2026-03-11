@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Landmark, Wallet, Loader2, ArrowDownToLine, CheckCircle2 } from "lucide-react";
-import { useWriteContract, useChainId, useSwitchChain, usePublicClient } from "wagmi";
+import { useWriteContract, useChainId, useSwitchChain, usePublicClient, useSignTypedData } from "wagmi";
 import { parseUnits, pad, maxUint256 } from "viem";
 import { usePlaidLink } from "react-plaid-link";
 import { useTranslation } from "react-i18next";
@@ -14,6 +14,8 @@ import {
   ERC20_APPROVE_ABI,
   MARITIME_DEPOSIT_ABI,
   CONTRACT_ERROR_MESSAGES,
+  DEPOSIT_INTENT_DOMAIN,
+  DEPOSIT_INTENT_TYPES,
 } from "../lib/config";
 
 const PRESETS = [50, 100, 250, 500, 1000];
@@ -107,6 +109,7 @@ export function DepositMethodModal({ onClose }: Props) {
   const [achAmount,       setAchAmount]       = useState("");
   const [achLegalName,    setAchLegalName]    = useState("");
   const [achLoading,      setAchLoading]      = useState(false);
+  const [achStep,         setAchStep]         = useState<"signing" | "submitting" | null>(null);
   const [achResult,       setAchResult]       = useState<TransferResult | null>(null);
   const [achError,        setAchError]        = useState<string | null>(null);
 
@@ -175,30 +178,73 @@ export function DepositMethodModal({ onClose }: Props) {
   const achAmountNum = parseFloat(achAmount);
   const achCanSubmit = achAccountId && achLegalName.trim().length >= 2 && achAmountNum >= 1;
 
+
   const handleAchSubmit = async () => {
     if (!achCanSubmit || !address) return;
     setAchLoading(true);
     setAchError(null);
-    const endpoint = achForm === "deposit"
-      ? `${BACKEND_URL}/api/plaid/transfer/deposit`
-      : `${BACKEND_URL}/api/plaid/transfer/withdraw`;
-    try {
-      const res  = await fetch(endpoint, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body:   JSON.stringify({
-          walletAddress: address,
-          accountId:     achAccountId,
-          amount:        achAmountNum.toFixed(2),
-          legalName:     achLegalName.trim(),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.reason ?? data.error ?? "Transfer failed.");
-      setAchResult(data as TransferResult);
-    } catch (err: unknown) {
-      setAchError(err instanceof Error ? err.message : "Transfer failed.");
-    } finally {
-      setAchLoading(false);
+    setAchStep(null);
+
+    if (achForm === "deposit") {
+      // ── Deposit: EIP-712 sign → /api/transfer/create ─────────────────────
+      try {
+        const amount    = achAmountNum.toFixed(2);
+        const timestamp = BigInt(Math.floor(Date.now() / 1000));
+
+        setAchStep("signing");
+        const signature = await signTypedDataAsync({
+          domain:      DEPOSIT_INTENT_DOMAIN,
+          types:       DEPOSIT_INTENT_TYPES,
+          primaryType: "DepositIntent",
+          message: {
+            walletAddress: address as `0x${string}`,
+            amount,
+            timestamp,
+          },
+        });
+
+        setAchStep("submitting");
+        const res  = await fetch(`${BACKEND_URL}/api/plaid/transfer/deposit`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body:   JSON.stringify({
+            walletAddress: address,
+            accountId:     achAccountId,
+            amount,
+            legalName:     achLegalName.trim(),
+            intentTimestamp: timestamp.toString(),
+            signature,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.reason ?? data.error ?? "Transfer failed.");
+        setAchResult(data as TransferResult);
+      } catch (err: unknown) {
+        setAchError(err instanceof Error ? err.message : "Transfer failed.");
+      } finally {
+        setAchLoading(false);
+        setAchStep(null);
+      }
+    } else {
+      // ── Withdraw: existing unsigned path ─────────────────────────────────
+      try {
+        const res  = await fetch(`${BACKEND_URL}/api/plaid/transfer/withdraw`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body:   JSON.stringify({
+            walletAddress: address,
+            accountId:     achAccountId,
+            amount:        achAmountNum.toFixed(2),
+            legalName:     achLegalName.trim(),
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.reason ?? data.error ?? "Transfer failed.");
+        setAchResult(data as TransferResult);
+      } catch (err: unknown) {
+        setAchError(err instanceof Error ? err.message : "Transfer failed.");
+      } finally {
+        setAchLoading(false);
+        setAchStep(null);
+      }
     }
   };
 
@@ -215,6 +261,7 @@ export function DepositMethodModal({ onClose }: Props) {
   const [depositTxHash, setDepositTxHash] = useState<`0x${string}` | undefined>();
 
   const { writeContractAsync } = useWriteContract();
+  const { signTypedDataAsync } = useSignTypedData();
   const chainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
   const sepoliaClient = usePublicClient({ chainId: 11155111 });
@@ -450,7 +497,9 @@ export function DepositMethodModal({ onClose }: Props) {
                       ? "bg-[#00c805] text-black hover:bg-[#00b004]"
                       : "bg-white text-black hover:bg-gray-200"
                   }`}>
-                  {achLoading
+                  {achStep === "signing"
+                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Sign in wallet…</>
+                    : achStep === "submitting"
                     ? <><Loader2 className="w-4 h-4 animate-spin" /> Processing…</>
                     : achForm === "deposit"
                     ? achAmountNum >= 1 ? `Deposit $${achAmountNum.toFixed(2)}` : "Deposit"

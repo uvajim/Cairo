@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useSignTypedData } from "wagmi";
 import { usePlaidLink } from "react-plaid-link";
 import {
   Landmark, RefreshCw, Loader2, Building2,
   ArrowDownLeft, ArrowUpRight, CheckCircle2,
 } from "lucide-react";
 import { useWallet } from "../contexts/WalletContext";
-import { BACKEND_URL } from "../lib/config";
+import { BACKEND_URL, DEPOSIT_INTENT_DOMAIN, DEPOSIT_INTENT_TYPES } from "../lib/config";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -197,9 +198,7 @@ function TransferForm({ type, accounts, walletAddress, onSuccess }: {
   const [loading,   setLoading]   = useState(false);
   const [error,     setError]     = useState<string | null>(null);
 
-  const endpoint = type === "deposit"
-    ? `${BACKEND_URL}/api/plaid/transfer/deposit`
-    : `${BACKEND_URL}/api/plaid/transfer/withdraw`;
+  const { signTypedDataAsync } = useSignTypedData();
 
   const amountNum = parseFloat(amount);
   const canSubmit = accountId && legalName.trim().length >= 2 && amountNum >= 1;
@@ -209,19 +208,43 @@ function TransferForm({ type, accounts, walletAddress, onSuccess }: {
     setLoading(true);
     setError(null);
     try {
-      const res  = await fetch(endpoint, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({
-          walletAddress,
-          accountId,
-          amount:    amountNum.toFixed(2),
-          legalName: legalName.trim(),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.reason ?? data.error ?? "Transfer failed.");
-      onSuccess(data as TransferResult);
+      const amountStr = amountNum.toFixed(2);
+
+      if (type === "deposit") {
+        const intentTimestamp = BigInt(Math.floor(Date.now() / 1000));
+        const signature = await signTypedDataAsync({
+          domain:      DEPOSIT_INTENT_DOMAIN,
+          types:       DEPOSIT_INTENT_TYPES,
+          primaryType: "DepositIntent",
+          message: {
+            walletAddress: walletAddress as `0x${string}`,
+            amount:        amountStr,
+            timestamp:     intentTimestamp,
+          },
+        });
+        const res = await fetch(`${BACKEND_URL}/api/plaid/transfer/deposit`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            walletAddress, accountId, amount: amountStr,
+            legalName: legalName.trim(),
+            intentTimestamp: intentTimestamp.toString(),
+            signature,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.reason ?? data.error ?? "Transfer failed.");
+        onSuccess(data as TransferResult);
+      } else {
+        const res = await fetch(`${BACKEND_URL}/api/plaid/transfer/withdraw`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            walletAddress, accountId, amount: amountStr, legalName: legalName.trim(),
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.reason ?? data.error ?? "Transfer failed.");
+        onSuccess(data as TransferResult);
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Transfer failed.");
     } finally {
