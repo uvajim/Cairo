@@ -3,7 +3,7 @@
 export const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "https://cairo-backend-production-67f8.up.railway.app";
 
 // Maritime Stack backend — trade offers, balances, ticker info.
-export const MARITIME_API_URL = process.env.NEXT_PUBLIC_MARITIME_API_URL ?? "http://localhost:3001";
+export const MARITIME_API_URL = process.env.NEXT_PUBLIC_MARITIME_API_URL ?? "https://cairo-backend-production-67f8.up.railway.app";
 export const PORTFOLIO_BALANCE_API_URL = `${MARITIME_API_URL}/api/portfolio-balance`;
 
 // ── Railway backend routes ────────────────────────────────────────────────────

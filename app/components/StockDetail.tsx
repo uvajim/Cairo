@@ -239,45 +239,27 @@ function StockDetailContent({ symbol }: { symbol: string }) {
       }
 
       const { params, signature } = await response.json();
-      let hash: `0x${string}`;
+      const sig = signature as `0x${string}`;
 
       if (orderType === 'buy') {
-        const p = {
-          user:   params.user as `0x${string}`,
-          ticker: params.ticker as string,
-          shares: BigInt(params.shares),
-          nonce:  BigInt(params.nonce),
-          expiry: BigInt(params.expiry),
-          mdtCost: BigInt(params.mdtCost),
-        };
-
-        hash = await writeContractAsync({
+        const hash = await writeContractAsync({
           address:      TRADE_EXECUTOR_ADDRESS,
           abi:          TRADE_EXECUTOR_ABI,
           functionName: 'executeBuy',
-          args:         [p, signature as `0x${string}`],
+          args:         [{ user: params.user as `0x${string}`, ticker: params.ticker as string, shares: BigInt(params.shares), mdtCost: BigInt(params.mdtCost), nonce: BigInt(params.nonce), expiry: BigInt(params.expiry) }, sig],
           chainId:      CHAIN_ID,
         });
+        setOrderId(hash);
       } else {
-        const p = {
-          user:   params.user as `0x${string}`,
-          ticker: params.ticker as string,
-          shares: BigInt(params.shares),
-          nonce:  BigInt(params.nonce),
-          expiry: BigInt(params.expiry),
-          mdtPayout: BigInt(params.mdtPayout),
-        };
-
-        hash = await writeContractAsync({
+        const hash = await writeContractAsync({
           address:      TRADE_EXECUTOR_ADDRESS,
           abi:          TRADE_EXECUTOR_ABI,
           functionName: 'executeSell',
-          args:         [p, signature as `0x${string}`],
+          args:         [{ user: params.user as `0x${string}`, ticker: params.ticker as string, shares: BigInt(params.shares), mdtPayout: BigInt(params.mdtPayout), nonce: BigInt(params.nonce), expiry: BigInt(params.expiry) }, sig],
           chainId:      CHAIN_ID,
         });
+        setOrderId(hash);
       }
-
-      setOrderId(hash);
       setConfirmedShares(Number(BigInt(params.shares)) / 1_000_000);
       setOrderStep('paid');
       refreshBalance();
