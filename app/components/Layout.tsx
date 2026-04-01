@@ -1,7 +1,7 @@
 "use client";
 
 import { Outlet, Link, useLocation, useNavigate } from "react-router";
-import { Globe, Search, CircleDollarSign, LayoutDashboard, PieChart, Smartphone, Landmark } from "lucide-react";
+import { Globe, Search, CircleDollarSign, LayoutDashboard, PieChart, Smartphone, Landmark, Moon, Sun, Monitor } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useWallet } from "../contexts/WalletContext";
@@ -24,12 +24,13 @@ const NAV_KEYS = [
 ];
 
 const shortAddress = (addr: string) => `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+type ThemeChoice = "system" | "light" | "dark";
 
 export function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
   const { t, i18n } = useTranslation();
-  const { address, usdBalance, connecting, walletError, connect, disconnect } = useWallet();
+  const { address, connecting, walletError, connect, disconnect } = useWallet();
 
   const [query,       setQuery]       = useState("");
   const [suggestions, setSuggestions] = useState<SearchResult[]>([]);
@@ -39,9 +40,47 @@ export function Layout() {
 
   const [showWalletMenu, setShowWalletMenu] = useState(false);
   const walletMenuRef = useRef<HTMLDivElement>(null);
+  const [copiedNav, setCopiedNav] = useState(false);
+  function copyAddressNav() {
+    if (!address) return;
+    navigator.clipboard.writeText(address);
+    setCopiedNav(true);
+    setTimeout(() => setCopiedNav(false), 2000);
+  }
 
   const [showLangMenu, setShowLangMenu] = useState(false);
   const langMenuRef = useRef<HTMLDivElement>(null);
+  const [themeChoice, setThemeChoice] = useState<ThemeChoice>("system");
+
+  useEffect(() => {
+    const stored = localStorage.getItem("maritime-theme");
+    if (stored === "light" || stored === "dark" || stored === "system") {
+      setThemeChoice(stored);
+    }
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = () => {
+      const resolved = themeChoice === "system" ? (media.matches ? "dark" : "light") : themeChoice;
+      const cls = resolved === "dark" ? "theme-dark" : "theme-light";
+      document.documentElement.classList.remove("theme-light", "theme-dark");
+      document.documentElement.classList.add(cls);
+      document.body.classList.remove("theme-light", "theme-dark");
+      document.body.classList.add(cls);
+      document.documentElement.style.colorScheme = resolved;
+    };
+    applyTheme();
+    media.addEventListener("change", applyTheme);
+    return () => media.removeEventListener("change", applyTheme);
+  }, [themeChoice]);
+
+  const cycleTheme = () => {
+    const next: ThemeChoice =
+      themeChoice === "system" ? "light" : themeChoice === "light" ? "dark" : "system";
+    setThemeChoice(next);
+    localStorage.setItem("maritime-theme", next);
+  };
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -113,16 +152,16 @@ export function Layout() {
   };
 
   return (
-    <div className="min-h-screen bg-black text-white selection:bg-gray-800">
+    <div className="min-h-screen app-bg app-fg selection:bg-gray-800">
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
-      <header className="border-b border-gray-900 bg-black sticky top-0 z-50">
+      <header className="border-b border-default surface-1 sticky top-0 z-50">
         <div className="max-w-[1024px] mx-auto px-6">
           <div className="flex items-center h-16">
 
             {/* Logo — fixed to the left */}
             <div className="flex items-center gap-2 mr-16">
-              <img src="/maritime.png" alt="Maritime" className="w-8 h-8 object-contain invert" />
+              <img src="/maritime.png" alt="Maritime" className="logo-maritime w-8 h-8 object-contain" />
               <h1 className="text-xl font-bold tracking-tight">Maritime</h1>
             </div>
 
@@ -132,8 +171,8 @@ export function Layout() {
                 <Link
                   key={item.path}
                   to={item.path}
-                  className={`text-sm font-medium transition-colors hover:text-white whitespace-nowrap ${
-                    isActive(item.path) ? "text-white" : "text-gray-500"
+                  className={`text-sm font-medium transition-colors whitespace-nowrap ${
+                    isActive(item.path) ? "app-fg" : "text-muted"
                   }`}
                 >
                   {t(item.key)}
@@ -153,25 +192,25 @@ export function Layout() {
                     onKeyDown={handleKeyDown}
                     onFocus={() => suggestions.length > 0 && setShowDrop(true)}
                     placeholder={t("nav.searchPlaceholder")}
-                    className="bg-[#1E1E24] border border-transparent focus:border-white/20 rounded text-sm pl-8 pr-4 py-1.5 w-64 text-white placeholder-gray-500 transition-all outline-none"
+                    className="surface-2 border border-transparent focus:border-white/20 rounded text-sm pl-8 pr-4 py-1.5 w-64 app-fg placeholder:text-muted transition-all outline-none"
                   />
                 </form>
 
                 {/* Suggestions dropdown */}
                 {showDrop && suggestions.length > 0 && (
-                  <div className="absolute top-full mt-1 left-0 w-full bg-[#1A1B1F] border border-gray-800 rounded-lg shadow-xl overflow-hidden z-50">
+                  <div className="absolute top-full mt-1 left-0 w-full surface-3 border border-default rounded-lg shadow-xl overflow-hidden z-50">
                     {suggestions.map((s, i) => (
                       <button
                         key={s.symbol}
                         onMouseDown={() => navigate_to(s.symbol)}
                         onMouseEnter={() => setActiveIdx(i)}
                         className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${
-                          i === activeIdx ? "bg-[#2A2B30]" : "hover:bg-[#2A2B30]"
+                          i === activeIdx ? "surface-2" : "hover-surface"
                         }`}
                       >
-                        <span className="text-xs font-bold text-white w-14 shrink-0">{s.symbol}</span>
-                        <span className="text-xs text-gray-400 truncate flex-1">{s.name}</span>
-                        <span className="text-xs text-gray-600 shrink-0">{s.exchange}</span>
+                        <span className="text-xs font-bold app-fg w-14 shrink-0">{s.symbol}</span>
+                        <span className="text-xs text-muted truncate flex-1">{s.name}</span>
+                        <span className="text-xs text-soft shrink-0">{s.exchange}</span>
                       </button>
                     ))}
                   </div>
@@ -182,20 +221,20 @@ export function Layout() {
               <div ref={langMenuRef} className="hidden md:block relative">
                 <button
                   onClick={() => setShowLangMenu(v => !v)}
-                  className="flex items-center gap-1 text-gray-400 hover:text-white transition-colors text-sm"
+                  className="flex items-center gap-1 text-muted transition-colors text-sm"
                   title="Language"
                 >
                   <Globe className="w-4 h-4" />
                   <span className="font-medium">{LANGUAGES[i18n.language] ?? "EN"}</span>
                 </button>
                 {showLangMenu && (
-                  <div className="absolute top-full right-0 mt-2 w-36 bg-[#1E1E24] border border-gray-800 rounded-xl shadow-xl overflow-y-auto max-h-64 z-50">
+                  <div className="absolute top-full right-0 mt-2 w-36 surface-2 border border-default rounded-xl shadow-xl overflow-y-auto max-h-64 z-50">
                     {Object.entries(LANGUAGES).map(([code, label]) => (
                       <button
                         key={code}
                         onClick={() => { i18n.changeLanguage(code); setShowLangMenu(false); }}
-                        className={`w-full px-4 py-2.5 text-sm text-left transition-colors hover:bg-gray-800 flex items-center justify-between ${
-                          i18n.language === code ? "text-white font-bold" : "text-gray-300"
+                        className={`w-full px-4 py-2.5 text-sm text-left transition-colors hover-surface flex items-center justify-between ${
+                          i18n.language === code ? "app-fg font-bold" : "text-muted"
                         }`}
                       >
                         {label}
@@ -205,6 +244,14 @@ export function Layout() {
                   </div>
                 )}
               </div>
+
+              <button
+                onClick={cycleTheme}
+                className="hidden md:flex items-center gap-1 text-muted transition-colors text-sm"
+                title={`Theme: ${themeChoice}`}
+              >
+                {themeChoice === "light" ? <Sun className="w-4 h-4" /> : themeChoice === "dark" ? <Moon className="w-4 h-4" /> : <Monitor className="w-4 h-4" />}
+              </button>
 
               {walletError && (
                 <span className="hidden md:block text-xs text-red-400 max-w-[140px] truncate" title={walletError}>
@@ -217,14 +264,10 @@ export function Layout() {
                 <span className="text-sm font-bold text-gray-400">{t("nav.connecting")}</span>
               ) : address ? (
                 <div ref={walletMenuRef} className="relative flex items-center">
-                  {/* Balance pill — sits behind */}
-                  <div className="bg-[#1E1E24] border border-transparent px-3 py-1.5 rounded-full text-sm text-gray-300 font-normal pr-6 -mr-4 z-0">
-                    ${usdBalance.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </div>
                   {/* Address pill — sits on top */}
                   <button
                     onClick={() => setShowWalletMenu(v => !v)}
-                    className="flex items-center gap-1.5 bg-[#2A2B30] border border-gray-700 px-3 py-1.5 rounded-full text-sm font-bold hover:bg-gray-800 transition-colors z-10 relative"
+                    className="flex items-center gap-1.5 surface-3 border border-default px-3 py-1.5 rounded-full text-sm font-bold hover-surface transition-colors z-10 relative app-fg"
                   >
                     <span className="w-2 h-2 rounded-full bg-[#00c805] inline-block" />
                     {shortAddress(address)}
@@ -232,10 +275,16 @@ export function Layout() {
 
                   {/* Dropdown */}
                   {showWalletMenu && (
-                    <div className="absolute top-full right-0 mt-2 w-44 bg-[#1E1E24] border border-gray-800 rounded-xl shadow-xl overflow-hidden z-50">
+                    <div className="absolute top-full right-0 mt-2 w-44 surface-2 border border-default rounded-xl shadow-xl overflow-hidden z-50">
+                      <button
+                        onClick={() => { copyAddressNav(); }}
+                        className="w-full px-4 py-3 text-sm font-semibold text-muted hover-surface transition-colors text-left"
+                      >
+                        {copiedNav ? "Copied!" : t("nav.copyAddress")}
+                      </button>
                       <button
                         onClick={() => { disconnect(); setShowWalletMenu(false); }}
-                        className="w-full px-4 py-3 text-sm font-semibold text-[#ff5000] hover:bg-gray-800 transition-colors text-left"
+                        className="w-full px-4 py-3 text-sm font-semibold text-[#ff5000] hover-surface transition-colors text-left"
                       >
                         {t("nav.disconnect")}
                       </button>
@@ -256,14 +305,14 @@ export function Layout() {
       </header>
 
       {/* ── Mobile bottom nav ──────────────────────────────────────────── */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-[#1A1B1F] border-t border-gray-800 z-50">
-        <div className="grid grid-cols-5">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 surface-3 border-t border-default z-50">
+        <div className="grid grid-cols-6">
           {NAV_KEYS.map((item) => (
             <Link
               key={item.path}
               to={item.path}
               className={`flex flex-col items-center gap-1 py-3 transition-colors ${
-                isActive(item.path) ? "text-white" : "text-gray-500"
+                isActive(item.path) ? "app-fg" : "text-muted"
               }`}
             >
               <item.icon className="w-5 h-5" />

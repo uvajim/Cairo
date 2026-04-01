@@ -114,11 +114,11 @@ export function WalletConfirmModal({ ticker, shares, price, billTotal, currency,
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center modal-scrim backdrop-blur-sm"
       onClick={onClose}
     >
       <div
-        className="relative w-full sm:max-w-sm bg-[#141414] border border-white/10 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl"
+        className="relative w-full sm:max-w-sm surface-2 border border-default rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
 
@@ -133,7 +133,7 @@ export function WalletConfirmModal({ ticker, shares, price, billTotal, currency,
                     <path d="M8.19 4.78C14.72-1.59 25.28-1.59 31.81 4.78l.76.74a.78.78 0 010 1.12l-2.6 2.53a.41.41 0 01-.57 0l-1.05-1.02c-4.5-4.38-11.8-4.38-16.3 0L10.8 9.2a.41.41 0 01-.57 0L7.63 6.67a.78.78 0 010-1.12l.56-.77zm14.7 13.72l-2.35 2.29a.41.41 0 01-.58 0L13.7 14.6a.2.2 0 00-.28 0l-6.26 6.19a.41.41 0 01-.57 0l-2.6-2.53a.78.78 0 010-1.12L10.25 11a.41.41 0 01.57 0l6.26 6.19a.2.2 0 00.28 0l6.26-6.19a.41.41 0 01.57 0l6.26 6.12a.78.78 0 010 1.12l-2.6 2.53a.41.41 0 01-.57 0l-6.26-6.19a.2.2 0 00-.27.02z"/>
                   </svg>
                 </div>
-                <span className="text-sm font-semibold text-white">Connect Wallet</span>
+                <span className="text-sm font-semibold app-fg">Connect Wallet</span>
               </div>
               <button
                 onClick={onClose}
@@ -149,7 +149,7 @@ export function WalletConfirmModal({ ticker, shares, price, billTotal, currency,
             <div className="px-5 py-3 border-b border-white/8">
               <p className="text-xs text-gray-400">
                 Choose your wallet to sign the transaction for{' '}
-                <span className="font-semibold text-white">{shares} {ticker}</span>
+                <span className="font-semibold app-fg">{shares} {ticker}</span>
               </p>
             </div>
 
@@ -164,7 +164,7 @@ export function WalletConfirmModal({ ticker, shares, price, billTotal, currency,
                   <div className="w-10 h-10 rounded-xl overflow-hidden shrink-0 flex items-center justify-center">
                     {w.icon}
                   </div>
-                  <span className="text-sm font-semibold text-white">{w.name}</span>
+                  <span className="text-sm font-semibold app-fg">{w.name}</span>
                   <svg viewBox="0 0 16 16" fill="none" className="w-4 h-4 text-gray-600 ml-auto">
                     <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
@@ -197,7 +197,7 @@ export function WalletConfirmModal({ ticker, shares, price, billTotal, currency,
                 </button>
                 <div>
                   <p className="text-[10px] text-gray-500 leading-none mb-0.5">{selectedWallet}</p>
-                  <p className="text-sm font-semibold text-white leading-none">Transaction Request</p>
+                  <p className="text-sm font-semibold app-fg leading-none">Transaction Request</p>
                 </div>
               </div>
               <button
@@ -216,7 +216,7 @@ export function WalletConfirmModal({ ticker, shares, price, billTotal, currency,
                 D
               </div>
               <div>
-                <p className="text-sm font-semibold text-white">maritime.app</p>
+                <p className="text-sm font-semibold app-fg">maritime.app</p>
                 <p className="text-xs text-gray-400">wants to make a transaction</p>
               </div>
               <div className="ml-auto flex items-center gap-1 bg-green-500/10 border border-green-500/20 rounded-full px-2.5 py-1">
@@ -234,7 +234,7 @@ export function WalletConfirmModal({ ticker, shares, price, billTotal, currency,
                     {currency === 'USDT' ? '₮' : '$'}
                   </div>
                   <div>
-                    <p className="text-xl font-bold text-white">
+                    <p className="text-xl font-bold app-fg">
                       {billTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       <span className="text-sm font-semibold text-gray-400 ml-1.5">{currency}</span>
                     </p>
@@ -254,12 +254,12 @@ export function WalletConfirmModal({ ticker, shares, price, billTotal, currency,
                   <p className="text-[10px] text-gray-500 mb-1">Network</p>
                   <div className="flex items-center gap-1.5">
                     <div className="w-4 h-4 rounded-full bg-[#627EEA] shrink-0" />
-                    <span className="text-sm font-semibold text-white">Ethereum</span>
+                    <span className="text-sm font-semibold app-fg">Ethereum</span>
                   </div>
                 </div>
                 <div className="bg-white/5 rounded-xl p-3">
                   <p className="text-[10px] text-gray-500 mb-1">Network fee</p>
-                  <p className="text-sm font-semibold text-white">~${gas}</p>
+                  <p className="text-sm font-semibold app-fg">~${gas}</p>
                 </div>
               </div>
 
@@ -277,7 +277,7 @@ export function WalletConfirmModal({ ticker, shares, price, billTotal, currency,
             <div className="grid grid-cols-2 gap-3 px-5 pb-6 pt-2">
               <button
                 onClick={onClose}
-                className="py-3.5 rounded-2xl bg-white/8 hover:bg-white/12 text-white font-semibold text-sm transition-colors"
+                className="py-3.5 rounded-2xl bg-white/8 hover:bg-white/12 app-fg font-semibold text-sm transition-colors"
               >
                 Reject
               </button>

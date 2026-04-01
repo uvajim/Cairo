@@ -63,10 +63,10 @@ export function Swap() {
 
   return (
     <div className="max-w-xl mx-auto px-4 py-8 md:py-16">
-      <div className="bg-[#1A1B1F] rounded-2xl p-6">
+      <div className="surface-3 border border-default rounded-2xl p-6">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-semibold">Trade</h2>
-          <button className="p-2 hover:bg-gray-800 rounded-lg transition-colors">
+          <button className="p-2 hover-surface rounded-lg transition-colors">
             <Settings className="w-5 h-5" />
           </button>
         </div>
@@ -89,7 +89,7 @@ export function Swap() {
             />
             <button
               onClick={() => setShowFromSelect(!showFromSelect)}
-              className="flex items-center gap-2 bg-[#1A1B1F] hover:bg-gray-800 px-4 py-2 rounded-xl transition-colors"
+              className="flex items-center gap-2 surface-3 border border-default hover-surface px-4 py-2 rounded-xl transition-colors"
             >
               <div className={`w-6 h-6 ${
                 fromAsset.type === 'stock' 
@@ -112,7 +112,7 @@ export function Swap() {
         <div className="flex justify-center -my-2 relative z-10">
           <button
             onClick={handleSwapAssets}
-            className="bg-[#1A1B1F] hover:bg-gray-800 p-2 rounded-xl border-4 border-[#0D0E12] transition-colors"
+            className="surface-3 hover-surface p-2 rounded-xl border-4 border-default transition-colors"
           >
             <ArrowDown className="w-5 h-5" />
           </button>
@@ -136,7 +136,7 @@ export function Swap() {
             />
             <button
               onClick={() => setShowToSelect(!showToSelect)}
-              className="flex items-center gap-2 bg-[#1A1B1F] hover:bg-gray-800 px-4 py-2 rounded-xl transition-colors"
+              className="flex items-center gap-2 surface-3 border border-default hover-surface px-4 py-2 rounded-xl transition-colors"
             >
               <div className={`w-6 h-6 ${
                 toAsset.type === 'stock' 
@@ -192,7 +192,7 @@ export function Swap() {
       {/* Asset Selection Modal */}
       {(showFromSelect || showToSelect) && (
         <div 
-          className="fixed inset-0 bg-black/80 z-50 flex items-end md:items-center justify-center"
+          className="fixed inset-0 modal-scrim-heavy z-50 flex items-end md:items-center justify-center"
           onClick={() => {
             setShowFromSelect(false);
             setShowToSelect(false);
@@ -200,10 +200,10 @@ export function Swap() {
           }}
         >
           <div 
-            className="bg-[#1A1B1F] w-full md:max-w-md md:rounded-2xl rounded-t-2xl max-h-[80vh] flex flex-col"
+            className="surface-3 border border-default w-full md:max-w-md md:rounded-2xl rounded-t-2xl max-h-[80vh] flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="p-6 border-b border-gray-800">
+            <div className="p-6 border-b border-default">
               <h3 className="text-xl font-semibold mb-4">Select Asset</h3>
               <div className="relative mb-4">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
@@ -212,7 +212,7 @@ export function Swap() {
                   placeholder="Search stocks or crypto..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full bg-[#0D0E12] pl-10 pr-4 py-3 rounded-lg outline-none focus:ring-2 focus:ring-purple-500"
+                  className="w-full surface-1 border border-default pl-10 pr-4 py-3 rounded-lg app-fg outline-none focus:ring-2 focus:ring-purple-500"
                   autoFocus
                 />
               </div>
@@ -220,7 +220,7 @@ export function Swap() {
                 <button
                   onClick={() => setActiveTab('all')}
                   className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    activeTab === 'all' ? 'bg-purple-500/20 text-purple-400' : 'text-gray-400 hover:text-white'
+                    activeTab === 'all' ? 'bg-purple-500/20 text-purple-400' : 'text-gray-400 hover:app-fg'
                   }`}
                 >
                   All
@@ -228,7 +228,7 @@ export function Swap() {
                 <button
                   onClick={() => setActiveTab('stocks')}
                   className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    activeTab === 'stocks' ? 'bg-blue-500/20 text-blue-400' : 'text-gray-400 hover:text-white'
+                    activeTab === 'stocks' ? 'bg-blue-500/20 text-blue-400' : 'text-gray-400 hover:app-fg'
                   }`}
                 >
                   Stocks
@@ -236,7 +236,7 @@ export function Swap() {
                 <button
                   onClick={() => setActiveTab('crypto')}
                   className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    activeTab === 'crypto' ? 'bg-purple-500/20 text-purple-400' : 'text-gray-400 hover:text-white'
+                    activeTab === 'crypto' ? 'bg-purple-500/20 text-purple-400' : 'text-gray-400 hover:app-fg'
                   }`}
                 >
                   Crypto
@@ -258,7 +258,7 @@ export function Swap() {
                     setSearchTerm('');
                     handleFromAmountChange(fromAmount);
                   }}
-                  className="w-full p-4 hover:bg-gray-800/50 transition-colors flex items-center justify-between"
+                  className="w-full p-4 hover-surface/50 transition-colors flex items-center justify-between"
                 >
                   <div className="flex items-center gap-3">
                     <div className={`w-10 h-10 ${

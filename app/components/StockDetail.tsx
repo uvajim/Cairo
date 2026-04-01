@@ -2,13 +2,23 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router';
-import { useAccount } from 'wagmi';
+import { useAccount, useReadContract, useWatchContractEvent, useWriteContract } from 'wagmi';
 import { useAppKit } from '@reown/appkit/react';
 import { useTranslation } from 'react-i18next';
+import { formatUnits } from 'viem';
 import { PortfolioChart } from './PortfolioChart';
 import { ArrowLeft, CheckCircle2, ExternalLink, Loader2, Newspaper, XCircle } from 'lucide-react';
 import { useWallet } from '../contexts/WalletContext';
-import { BACKEND_URL, ASSETS_URL, TRADE_URL } from '../lib/config';
+import {
+  BACKEND_URL,
+  MARITIME_API_URL,
+  EQUITY_VAULT_ADDRESS,
+  EQUITY_VAULT_ABI,
+  TRADE_EXECUTOR_ADDRESS,
+  TRADE_EXECUTOR_ABI,
+  CHAIN_ID,
+  EXPLORER_URL,
+} from '../lib/config';
 
 const timeRanges = ['1D', '1W', '1M', '3M', '1Y'];
 
@@ -60,40 +70,63 @@ function StockDetailContent({ symbol }: { symbol: string }) {
   const { t } = useTranslation();
   const [selectedRange, setSelectedRange] = useState('1D');
   const [orderType, setOrderType]         = useState<'buy' | 'sell'>('buy');
-  const [shares,    setShares]            = useState('');
+  const [amount,    setAmount]            = useState('');
 
   // Order state machine
-  type OrderStep = 'input' | 'sending' | 'paid' | 'error';
-  const [orderStep,  setOrderStep]  = useState<OrderStep>('input');
-  const [orderError, setOrderError] = useState<string | null>(null);
-  const [orderId,    setOrderId]    = useState<string | null>(null);
+  type OrderStep = 'input' | 'fetching' | 'paid' | 'error';
+
+  const [orderStep,       setOrderStep]       = useState<OrderStep>('input');
+  const [orderError,      setOrderError]      = useState<string | null>(null);
+  const [orderId,         setOrderId]         = useState<string | null>(null);
+  const [confirmedShares, setConfirmedShares] = useState(0);
 
   // wagmi — wallet connection
   const { address, isConnected }   = useAccount();
   const { open: openWcModal }      = useAppKit();
 
   const { accountBalance, refreshBalance } = useWallet();
+  const { writeContractAsync } = useWriteContract();
 
-  // Shares of this symbol currently held by the user
-  const [ownedShares, setOwnedShares] = useState(0);
+  // Shares of this symbol held on-chain — read from EquityVault (canonical source)
+  const { data: balanceRaw, refetch: refetchOwnedShares } = useReadContract({
+    address:      EQUITY_VAULT_ADDRESS,
+    abi:          EQUITY_VAULT_ABI,
+    functionName: 'balanceOfTicker',
+    args:         address ? [address as `0x${string}`, symbol] : undefined,
+    chainId:      CHAIN_ID,
+    query:        { enabled: !!address },
+  });
 
-  const refreshOwnedShares = () => {
-    if (!address) return;
-    fetch(ASSETS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ walletAddress: address }),
-    })
-      .then(r => r.json())
-      .then(data => setOwnedShares(data?.holdings?.[symbol] ?? 0))
-      .catch(() => {});
-  };
+  const ownedShares = balanceRaw !== undefined ? Number(formatUnits(balanceRaw as bigint, 6)) : 0;
 
-  useEffect(() => {
-    if (!address) { setOwnedShares(0); return; }
-    refreshOwnedShares();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [address, symbol]);
+  // Freeze status — a frozen account cannot trade
+  const { data: isFrozen } = useReadContract({
+    address:      EQUITY_VAULT_ADDRESS,
+    abi:          EQUITY_VAULT_ABI,
+    functionName: 'frozen',
+    args:         address ? [address as `0x${string}`] : undefined,
+    chainId:      CHAIN_ID,
+    query:        { enabled: !!address },
+  });
+
+  // Real-time portfolio updates via EquityVault events
+  useWatchContractEvent({
+    address:   EQUITY_VAULT_ADDRESS,
+    abi:       EQUITY_VAULT_ABI,
+    eventName: 'SharesMinted',
+    args:      address ? { to: address as `0x${string}` } : undefined,
+    onLogs:    () => refetchOwnedShares(),
+    enabled:   !!address,
+  });
+
+  useWatchContractEvent({
+    address:   EQUITY_VAULT_ADDRESS,
+    abi:       EQUITY_VAULT_ABI,
+    eventName: 'SharesBurned',
+    args:      address ? { from: address as `0x${string}` } : undefined,
+    onLogs:    () => refetchOwnedShares(),
+    enabled:   !!address,
+  });
 
   // Data state
   const [loading,      setLoading]      = useState(true);
@@ -170,70 +203,78 @@ function StockDetailContent({ symbol }: { symbol: string }) {
   });
 
   // ── Order handlers ───────────────────────────────────────────────────────
-  const sharesNum = parseFloat(shares || '0');
-  const estimatedCost = sharesNum * price;
+  const amountNum      = parseFloat(amount || '0');
+  const estimatedShares = price > 0 ? amountNum / price : 0;
 
-  const insufficientFunds  = orderType === 'buy'  && isConnected && sharesNum > 0 && estimatedCost > accountBalance;
-  const insufficientShares = orderType === 'sell' && isConnected && sharesNum > 0 && sharesNum > ownedShares;
-  const isSubmitDisabled   = sharesNum <= 0 || insufficientFunds || insufficientShares;
+  const insufficientFunds  = orderType === 'buy'  && isConnected && amountNum > 0 && amountNum > accountBalance;
+  const insufficientShares = orderType === 'sell' && isConnected && amountNum > 0 && estimatedShares > ownedShares;
+  const accountFrozen      = isConnected && !!isFrozen;
+  const isReviewDisabled   = amountNum <= 0 || insufficientFunds || insufficientShares || accountFrozen;
 
-  async function handleExecuteTrade() {
-    if (sharesNum <= 0) return;
+  // Step 1 — fetch signed params from backend, Step 2 — user submits to chain
+  async function handleTrade() {
+    if (amountNum <= 0) return;
 
     if (!isConnected || !address) {
       openWcModal({ view: 'Connect' });
       return;
     }
 
-    setOrderStep('sending');
+    setOrderStep('fetching');
     setOrderError(null);
 
     try {
-      // Point this to your new Cloud Run endpoint or backend proxy
-      const response = await fetch(TRADE_URL, {
-        method: 'POST',
+      const amountRaw = String(Math.round(amountNum * 1_000_000));
+
+      const response = await fetch(`${MARITIME_API_URL}/api/trade`, {
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ticker: symbol,
-          qty: sharesNum,
-          walletAddress: address,
-          side: orderType,
-        })
+        body:    JSON.stringify({ walletAddress: address, ticker: symbol, amount: amountRaw, side: orderType }),
       });
 
-      // Handle the custom HTTP status codes we set up in the Cloud Function
       if (!response.ok) {
-        if (response.status === 402) {
-          throw new Error('Insufficient funds in your account. Please deposit more.');
-        } else if (response.status === 404) {
-          throw new Error('Account not found. Please make a deposit first.');
-        } else {
-          const errText = await response.text();
-          throw new Error(errText || 'Failed to execute trade.');
-        }
+        const body = await response.json().catch(() => ({}));
+        const errMsg = body?.error ?? `Request failed (${response.status})`;
+        throw new Error(typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg));
       }
 
-      const text = await response.text();
-      let data: { orderId?: string } = {};
-      try { data = JSON.parse(text); } catch {
-        // Cloud Run returned plain text — treat non-empty body as an error message
-        if (text) throw new Error(text);
-      }
+      const { params, signature } = await response.json();
 
-      setOrderId(data.orderId ?? null); // Save Alpaca Order ID
+      // Convert string params back to bigints for the contract call
+      const p = {
+        user:   params.user   as `0x${string}`,
+        ticker: params.ticker as string,
+        shares: BigInt(params.shares),
+        nonce:  BigInt(params.nonce),
+        expiry: BigInt(params.expiry),
+        ...(orderType === 'buy'
+          ? { mdtCost:   BigInt(params.mdtCost) }
+          : { mdtPayout: BigInt(params.mdtPayout) }),
+      };
+
+      const hash = await writeContractAsync({
+        address:      TRADE_EXECUTOR_ADDRESS,
+        abi:          TRADE_EXECUTOR_ABI,
+        functionName: orderType === 'buy' ? 'executeBuy' : 'executeSell',
+        args:         [p, signature as `0x${string}`],
+        chainId:      CHAIN_ID,
+      });
+
+      setOrderId(hash);
+      setConfirmedShares(Number(BigInt(params.shares)) / 1_000_000);
       setOrderStep('paid');
       refreshBalance();
-      refreshOwnedShares();
-
+      refetchOwnedShares();
     } catch (err) {
-      setOrderError(err instanceof Error ? err.message : 'An error occurred while placing the order.');
+      setOrderError(err instanceof Error ? err.message : 'Trade failed.');
       setOrderStep('error');
     }
   }
 
   function resetOrder() {
     setOrderStep('input');
-    setShares('');
+    setAmount('');
+    setConfirmedShares(0);
     setOrderError(null);
     setOrderId(null);
   }
@@ -251,14 +292,14 @@ function StockDetailContent({ symbol }: { symbol: string }) {
 
   return (
       <>
-        <div className="bg-black text-white font-sans min-h-screen selection:bg-gray-800">
+        <div className="app-bg app-fg font-sans min-h-screen selection:bg-gray-800">
           <div className="max-w-5xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-12">
 
             {/* Main content */}
             <div className="flex flex-col">
 
               {/* Back */}
-              <Link to="/" className="mb-4 inline-flex items-center text-gray-400 hover:text-white transition-colors w-fit">
+              <Link to="/" className="mb-4 inline-flex items-center text-muted hover:app-fg transition-colors w-fit">
                 <ArrowLeft className="w-4 h-4 mr-1" />
                 <span className="text-sm font-medium">{t('stock.back')}</span>
               </Link>
@@ -269,7 +310,7 @@ function StockDetailContent({ symbol }: { symbol: string }) {
                   {asset?.name ? `${asset.name} (${symbol})` : symbol}
                 </h1>
                 {loading ? (
-                    <div className="h-12 w-40 bg-gray-800 animate-pulse rounded mt-2" />
+                    <div className="h-12 w-40 surface-3 animate-pulse rounded mt-2" />
                 ) : (
                     <>
                       <h2 className="text-4xl font-bold tracking-tight">
@@ -291,7 +332,7 @@ function StockDetailContent({ symbol }: { symbol: string }) {
               {/* Chart */}
               <div className="mb-8 relative">
                 {barsLoading ? (
-                    <div className="h-[300px] w-full bg-gray-900/40 animate-pulse rounded-xl" />
+                    <div className="h-[300px] w-full surface-3 animate-pulse rounded-xl" />
                 ) : (
                     <PortfolioChart
                         color={activeColor}
@@ -300,13 +341,13 @@ function StockDetailContent({ symbol }: { symbol: string }) {
                         onHover={(v, t) => { setHoveredPrice(v); setHoveredTime(t); }}
                     />
                 )}
-                <div className="flex justify-between items-center mt-6 border-b border-gray-800 pb-4">
+                <div className="flex justify-between items-center mt-6 border-b border-default pb-4">
                   <div className="flex gap-1">
                     {timeRanges.map((range) => (
                         <button
                             key={range}
                             onClick={() => setSelectedRange(range)}
-                            className="px-3 py-1 text-xs font-bold rounded hover:bg-gray-800 transition-colors"
+                            className="px-3 py-1 text-xs font-bold rounded hover-surface transition-colors"
                             style={{ color: selectedRange === range ? activeColor : '#9CA3AF' }}
                         >
                           {range}
@@ -318,7 +359,7 @@ function StockDetailContent({ symbol }: { symbol: string }) {
 
               {/* Stats */}
               {stats.length > 0 && (
-                  <div className="border-b border-gray-800 pb-8 mb-8">
+                  <div className="border-b border-default pb-8 mb-8">
                     <h3 className="text-xl font-medium mb-4">{t('stock.stats')}</h3>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-y-6 gap-x-4">
                       {stats.map((stat) => (
@@ -332,14 +373,14 @@ function StockDetailContent({ symbol }: { symbol: string }) {
               )}
 
               {/* News & About */}
-              <div className="border-b border-gray-800 pb-8 mb-8">
+              <div className="border-b border-default pb-8 mb-8">
                 <div className="flex items-center gap-2 mb-4">
                   <Newspaper className="w-5 h-5 text-gray-400" />
                   <h3 className="text-xl font-medium">{t('stock.newsInfo')}</h3>
                 </div>
                 {asset && (
                   <p className="text-sm text-gray-400 leading-relaxed mb-4">
-                    {t('stock.tradesOn', { name: asset.name, exchange: asset.exchange })} <strong className="text-white">{asset.symbol}</strong>.
+                    {t('stock.tradesOn', { name: asset.name, exchange: asset.exchange })} <strong className="app-fg">{asset.symbol}</strong>.
                     {asset.fractionable ? t('stock.fractional') : ''}
                   </p>
                 )}
@@ -359,12 +400,12 @@ function StockDetailContent({ symbol }: { symbol: string }) {
                 <div>
                   <h3 className="text-xl font-medium mb-4">{t('stock.yourPosition')}</h3>
                   {ownedShares > 0 ? (
-                    <div className="bg-[#1E1E24] rounded-xl p-5 space-y-4">
+                    <div className="surface-2 border border-default rounded-xl p-5 space-y-4">
                       <div className="flex justify-between items-center">
                         <span className="text-sm text-gray-400">{t('stock.sharesOwned')}</span>
                         <span className="text-sm font-bold">{ownedShares}</span>
                       </div>
-                      <div className="flex justify-between items-center border-t border-gray-700 pt-4">
+                      <div className="flex justify-between items-center border-t border-default pt-4">
                         <span className="text-sm text-gray-400">{t('stock.totalValue')}</span>
                         <span className="text-sm font-bold">
                           {price > 0
@@ -384,19 +425,19 @@ function StockDetailContent({ symbol }: { symbol: string }) {
             {/* Right sidebar — Buy / Sell panel */}
             <div className="hidden lg:block">
               <div className="sticky top-24">
-                <div className="bg-[#1E1E24] rounded-xl p-6 border border-gray-800">
+                <div className="surface-2 rounded-xl p-6 border border-default">
 
                   {/* ── Input step ── */}
                   {orderStep === 'input' && (
                       <>
                         {/* Buy / Sell tabs */}
-                        <div className="flex border-b border-gray-700 mb-6">
+                        <div className="flex border-b border-default mb-6">
                           {(['buy', 'sell'] as const).map(side => (
                               <button
                                   key={side}
                                   onClick={() => setOrderType(side)}
                                   className={`flex-1 pb-3 text-sm font-bold transition-colors relative capitalize ${
-                                      orderType === side ? 'text-[#00c805]' : 'text-gray-400 hover:text-white'
+                                      orderType === side ? 'text-[#00c805]' : 'text-muted hover:app-fg'
                                   }`}
                               >
                                 {side}
@@ -407,29 +448,41 @@ function StockDetailContent({ symbol }: { symbol: string }) {
                           ))}
                         </div>
 
-                        {/* Shares input */}
+                        {/* Amount input */}
                         <div className="space-y-4 mb-6">
-                          <div className="bg-black border border-gray-700 rounded-lg p-3 focus-within:border-[#00c805] transition-colors">
+                          <div className="surface-1 border border-default rounded-lg p-3 focus-within:border-[#00c805] transition-colors">
                             <div className="flex justify-between items-center">
-                              <span className="text-xs text-gray-400 mb-1">{t('stock.shares')}</span>
-                              <span className="text-xs text-gray-500">{symbol}</span>
+                              <span className="text-xs text-gray-400 mb-1">{t('stock.amount')}</span>
+                              {orderType === 'sell' && ownedShares > 0 && price > 0 ? (
+                                <button
+                                  onClick={() => setAmount((ownedShares * price).toFixed(2))}
+                                  className="text-xs font-bold text-[#00c805] hover:text-[#00b004] transition-colors"
+                                >
+                                  {t('stock.sellAll')}
+                                </button>
+                              ) : (
+                                <span className="text-xs text-gray-500">USD</span>
+                              )}
                             </div>
-                            <input
-                                type="number"
-                                min="0"
-                                step="any"
-                                placeholder="0"
-                                value={shares}
-                                onChange={e => setShares(e.target.value)}
-                                className="bg-transparent text-2xl font-bold text-white outline-none w-full"
-                            />
+                            <div className="flex items-center">
+                              <span className="text-2xl font-bold text-gray-400 mr-1">$</span>
+                              <input
+                                  type="number"
+                                  min="0"
+                                  step="any"
+                                  placeholder="0.00"
+                                  value={amount}
+                                  onChange={e => setAmount(e.target.value)}
+                                  className="bg-transparent text-2xl font-bold app-fg outline-none w-full"
+                              />
+                            </div>
                           </div>
 
                           <div className="flex justify-between text-sm">
-                            <span className="text-gray-400">{t('stock.estCost')}</span>
+                            <span className="text-gray-400">{t('stock.estShares')}</span>
                             <span className="font-bold">
-                        {sharesNum > 0 ? `$${estimatedCost.toFixed(2)}` : '—'}
-                      </span>
+                              {amountNum > 0 && price > 0 ? `${estimatedShares.toFixed(6)} ${symbol}` : '—'}
+                            </span>
                           </div>
 
                           {isConnected && orderType === 'buy' && (
@@ -442,43 +495,64 @@ function StockDetailContent({ symbol }: { symbol: string }) {
                           )}
 
                           {isConnected && orderType === 'sell' && (
-                            <div className="flex justify-between text-sm">
-                              <span className="text-gray-400">{t('stock.youOwn')}</span>
-                              <span className={`font-bold ${insufficientShares ? 'text-[#ff5000]' : 'text-gray-300'}`}>
-                                {t('stock.shares', { count: ownedShares })}
-                              </span>
-                            </div>
+                            <>
+                              <div className="flex justify-between text-sm">
+                                <span className="text-gray-400">{t('stock.marketPrice')}</span>
+                                <span className="font-bold">
+                                  {price > 0 ? `$${price.toFixed(2)} ${t('stock.perShare')}` : '—'}
+                                </span>
+                              </div>
+                              <div className="flex justify-between text-sm">
+                                <span className="text-gray-400">{t('stock.youOwn')}</span>
+                                <span className={`font-bold ${insufficientShares ? 'text-[#ff5000]' : 'text-gray-300'}`}>
+                                  {ownedShares.toFixed(6)} {symbol}
+                                </span>
+                              </div>
+                              <div className="flex justify-between text-sm">
+                                <span className="text-gray-400">{t('stock.totalValue')}</span>
+                                <span className="font-bold text-gray-300">
+                                  {price > 0 && ownedShares > 0
+                                    ? `$${(ownedShares * price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                    : '—'}
+                                </span>
+                              </div>
+                            </>
                           )}
                         </div>
 
-                        <div className="border-t border-gray-700 pt-4">
+                        <div className="border-t border-default pt-4">
                           <div className="flex justify-between text-xs text-gray-500 mb-4">
                             <span>{t('stock.marketPrice')}</span>
                             <span>{loading ? '—' : `$${price.toFixed(2)} ${t('stock.perShare')}`}</span>
                           </div>
                           <button
-                              onClick={handleExecuteTrade}
-                              disabled={isSubmitDisabled}
+                              onClick={handleTrade}
+                              disabled={isReviewDisabled}
                               className="w-full py-3.5 bg-[#00c805] hover:bg-[#00b004] text-black font-bold rounded-full transition-colors disabled:opacity-40"
                           >
-                            {isConnected ? t('stock.submitOrder') : t('stock.connectWallet')}
+                            {isConnected ? t('stock.reviewOrder') : t('stock.connectWallet')}
                           </button>
+                          {accountFrozen && (
+                            <p className="text-xs text-[#ff5000] text-center mt-2">
+                              This account is restricted.
+                            </p>
+                          )}
                           {insufficientFunds && (
                             <p className="text-xs text-[#ff5000] text-center mt-2">
-                              {t('stock.notEnoughFunds', { cost: estimatedCost.toFixed(2) })}
+                              {t('stock.notEnoughFunds', { cost: amountNum.toFixed(2) })}
                             </p>
                           )}
                           {insufficientShares && (
                             <p className="text-xs text-[#ff5000] text-center mt-2">
-                              {t('stock.onlyOwn', { count: ownedShares, symbol })}
+                              {t('stock.notEnoughShares', { owned: ownedShares.toFixed(6), symbol })}
                             </p>
                           )}
                         </div>
                       </>
                   )}
 
-                  {/* ── Sending ── */}
-                  {orderStep === 'sending' && (
+                  {/* ── Executing trade ── */}
+                  {orderStep === 'fetching' && (
                       <div className="flex flex-col items-center py-8 gap-3">
                         <Loader2 className="w-8 h-8 text-[#00c805] animate-spin" />
                         <p className="text-sm text-gray-400">{t('stock.executing')}</p>
@@ -489,22 +563,61 @@ function StockDetailContent({ symbol }: { symbol: string }) {
                   {orderStep === 'paid' && (
                       <div className="flex flex-col items-center py-6 gap-4 text-center">
                         <CheckCircle2 className="w-10 h-10 text-[#00c805]" />
+
+                        {/* Headline */}
                         <div>
-                          <p className="font-bold text-white mb-1">
+                          <p className="font-bold app-fg mb-1">
                             {orderType === 'buy' ? t('stock.buySubmitted') : t('stock.sellSubmitted')}
                           </p>
-                          <p className="text-xs text-gray-400">
-                            {t('stock.orderDetails', { qty: sharesNum, symbol, cost: estimatedCost.toFixed(2) })}
+                          <p className="text-sm text-gray-300 font-medium">
+                            {t('stock.orderDetails', { qty: confirmedShares.toFixed(6), symbol, cost: amountNum.toFixed(2) })}
                           </p>
                         </div>
+
+                        {/* Plain-language explanation */}
+                        <div className="w-full surface-3 border border-default rounded-xl p-4 text-left space-y-3">
+                          <div className="flex justify-between text-xs">
+                            <span className="text-gray-400">{orderType === 'buy' ? 'Shares received' : 'Shares sold'}</span>
+                            <span className="app-fg font-medium">{confirmedShares.toFixed(6)} {symbol}</span>
+                          </div>
+                          <div className="flex justify-between text-xs">
+                            <span className="text-gray-400">{orderType === 'buy' ? 'Amount paid' : 'Amount received'}</span>
+                            <span className="app-fg font-medium">${amountNum.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between text-xs">
+                            <span className="text-gray-400">Price per share</span>
+                            <span className="app-fg font-medium">
+                              {confirmedShares > 0 ? `$${(amountNum / confirmedShares).toFixed(2)}` : '—'}
+                            </span>
+                          </div>
+                          <div className="border-t border-default pt-3">
+                            <p className="text-xs text-gray-500 leading-relaxed">
+                              {orderType === 'buy'
+                                ? `Your ${symbol} shares are now in your wallet and will appear in your portfolio. Your MDT balance has been reduced by $${amountNum.toFixed(2)}.`
+                                : `$${amountNum.toFixed(2)} has been returned to your MDT balance. Your ${symbol} position has been reduced.`}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Etherscan link with explanation */}
                         {orderId && (
-                            <div className="text-xs text-gray-500 font-mono mt-2">
-                              {t('stock.orderId', { id: orderId.split('-')[0] })}
-                            </div>
+                          <div className="w-full text-left">
+                            <p className="text-xs text-gray-500 mb-1">Transaction ID — proof this trade is recorded on the blockchain:</p>
+                            <a
+                              href={`${EXPLORER_URL}/tx/${orderId}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-1.5 text-xs text-[#00c805] hover:text-[#00b004] font-mono break-all transition-colors"
+                            >
+                              <ExternalLink className="w-3 h-3 shrink-0" />
+                              {orderId}
+                            </a>
+                          </div>
                         )}
+
                         <button
                             onClick={resetOrder}
-                            className="mt-4 w-full py-2.5 text-sm font-bold border border-gray-700 rounded-full hover:bg-gray-800 transition-colors"
+                            className="w-full py-2.5 text-sm font-bold border border-default rounded-full hover-surface transition-colors"
                         >
                           {t('stock.newOrder')}
                         </button>
@@ -516,12 +629,12 @@ function StockDetailContent({ symbol }: { symbol: string }) {
                       <div className="flex flex-col items-center py-6 gap-4 text-center">
                         <XCircle className="w-10 h-10 text-[#ff5000]" />
                         <div>
-                          <p className="font-bold text-white mb-1">{t('stock.tradeFailed')}</p>
+                          <p className="font-bold app-fg mb-1">{t('stock.tradeFailed')}</p>
                           <p className="text-xs text-gray-400 break-words">{orderError}</p>
                         </div>
                         <button
                             onClick={resetOrder}
-                            className="w-full py-2.5 text-sm font-bold border border-gray-700 rounded-full hover:bg-gray-800 transition-colors"
+                            className="w-full py-2.5 text-sm font-bold border border-default rounded-full hover-surface transition-colors"
                         >
                           {t('stock.tryAgain')}
                         </button>

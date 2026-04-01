@@ -31,7 +31,7 @@ export function GetWallet() {
       </div>
 
       {/* Hero card */}
-      <div className="bg-[#1E1E24] rounded-2xl overflow-hidden mb-6">
+      <div className="surface-2 border border-default rounded-2xl overflow-hidden mb-6">
         <div className="px-8 py-12 flex flex-col items-center text-center">
           {/* App icon */}
           <div className="w-20 h-20 rounded-2xl overflow-hidden mb-6 shadow-lg">
@@ -80,7 +80,7 @@ export function GetWallet() {
         { emoji: "⚡",  title: t("app.instantExecution"), desc: t("app.instantExecutionDesc") },
         { emoji: "🔒", title: t("app.secure"),            desc: t("app.secureDesc") },
       ].map(f => (
-        <div key={f.title} className="bg-[#1E1E24] rounded-2xl px-6 py-5 mb-3 flex items-center gap-4">
+        <div key={f.title} className="surface-2 border border-default rounded-2xl px-6 py-5 mb-3 flex items-center gap-4">
           <span className="text-2xl">{f.emoji}</span>
           <div>
             <p className="font-semibold text-sm">{f.title}</p>

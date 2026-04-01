@@ -6,6 +6,7 @@ import { Balance } from "./components/Balance";
 import { PortfolioHoldings } from "./components/PortfolioHoldings";
 import { GetWallet } from "./components/GetWallet";
 import { Banking } from "./components/Banking";
+import { WeChatPay } from "./components/WeChatPay";
 
 export const router = createBrowserRouter([
   {
@@ -17,6 +18,7 @@ export const router = createBrowserRouter([
       { path: "portfolio", Component: PortfolioHoldings },
       { path: "balance",    Component: Balance    },
       { path: "banking",    Component: Banking    },
+      { path: "wechat",     Component: WeChatPay  },
       { path: "get-wallet", Component: GetWallet  },
     ],
   },

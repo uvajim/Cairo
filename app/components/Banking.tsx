@@ -99,10 +99,10 @@ function PlaidLinkInner({ token, walletAddress, onLinked, onCancel }: {
     <div className="flex items-center gap-3 flex-wrap">
       <span className="text-xs text-[#ff5000]">{errMsg}</span>
       <button onClick={() => { setErrMsg(null); open(); }} disabled={!ready}
-        className="text-xs font-bold text-gray-400 hover:text-white transition-colors">
+        className="text-xs font-bold text-gray-400 hover:app-fg transition-colors">
         Retry
       </button>
-      <button onClick={onCancel} className="text-xs text-gray-600 hover:text-white transition-colors">
+      <button onClick={onCancel} className="text-xs text-gray-600 hover:app-fg transition-colors">
         Cancel
       </button>
     </div>
@@ -173,7 +173,7 @@ function TransferRow({ transfer, accountName, onUpdate }: {
           </p>
           {transfer.status === "pending" && (
             <button onClick={handleRefresh} disabled={refreshing}
-              className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-white transition-colors disabled:opacity-40">
+              className="flex items-center gap-1 text-[10px] text-gray-500 hover:app-fg transition-colors disabled:opacity-40">
               <RefreshCw className={`w-2.5 h-2.5 ${refreshing ? "animate-spin" : ""}`} />
               Refresh
             </button>
@@ -271,7 +271,7 @@ function TransferForm({ type, accounts, walletAddress, onSuccess }: {
       <div>
         <label className="text-xs text-gray-400 mb-1.5 block">Bank account</label>
         <select value={accountId} onChange={e => setAccountId(e.target.value)}
-          className="w-full bg-[#2A2B30] border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-white/30 transition-colors appearance-none">
+          className="w-full surface-3 border border-default rounded-xl px-4 py-2.5 text-sm app-fg outline-none focus:border-white/30 transition-colors appearance-none">
           {accounts.map(a => (
             <option key={a.id} value={a.id}>{a.name} ···{a.mask}</option>
           ))}
@@ -280,11 +280,11 @@ function TransferForm({ type, accounts, walletAddress, onSuccess }: {
 
       <div>
         <label className="text-xs text-gray-400 mb-1.5 block">Amount (USD)</label>
-        <div className="bg-[#2A2B30] border border-gray-700 rounded-xl px-4 py-2.5 flex items-center gap-2 focus-within:border-white/30 transition-colors">
+        <div className="surface-3 border border-default rounded-xl px-4 py-2.5 flex items-center gap-2 focus-within:border-white/30 transition-colors">
           <span className="text-gray-500 text-sm">$</span>
           <input type="number" min="1" step="0.01" placeholder="0.00"
             value={amount} onChange={e => setAmount(e.target.value)}
-            className="bg-transparent text-sm text-white outline-none flex-1 w-0" />
+            className="bg-transparent text-sm app-fg outline-none flex-1 w-0" />
         </div>
       </div>
 
@@ -294,7 +294,7 @@ function TransferForm({ type, accounts, walletAddress, onSuccess }: {
         </label>
         <input type="text" placeholder="First Last"
           value={legalName} onChange={e => setLegalName(e.target.value)}
-          className="w-full bg-[#2A2B30] border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 outline-none focus:border-white/30 transition-colors" />
+          className="w-full surface-3 border border-default rounded-xl px-4 py-2.5 text-sm app-fg placeholder-gray-500 outline-none focus:border-white/30 transition-colors" />
       </div>
 
       {error && <p className="text-xs text-[#ff5000]">{error}</p>}
@@ -471,7 +471,7 @@ export function Banking() {
         <p className="text-gray-400 text-sm mb-8">ACH bank transfers via Plaid</p>
 
         <div className="flex flex-col items-center justify-center py-16 text-center border border-gray-800 rounded-2xl gap-6">
-          <div className="w-16 h-16 rounded-full bg-[#1E1E24] flex items-center justify-center">
+          <div className="w-16 h-16 rounded-full surface-2 border border-default flex items-center justify-center">
             <Building2 className="w-7 h-7 text-gray-400" />
           </div>
           <div>
@@ -519,7 +519,7 @@ export function Banking() {
           <p className="text-gray-400 text-sm">ACH bank transfers via Plaid</p>
         </div>
         <button onClick={startLink} disabled={fetchingToken}
-          className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors disabled:opacity-40">
+          className="flex items-center gap-2 text-sm text-gray-400 hover:app-fg transition-colors disabled:opacity-40">
           <Landmark className="w-4 h-4" />
           Add account
         </button>
@@ -546,7 +546,7 @@ export function Banking() {
         ) : (
           <div className="space-y-3">
             {accounts.map(acct => (
-              <div key={acct.id} className="bg-[#1E1E24] rounded-2xl px-6 py-4 flex items-center justify-between">
+              <div key={acct.id} className="surface-2 border border-default rounded-2xl px-6 py-4 flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0">
                     <Landmark className="w-5 h-5 text-blue-400" />
@@ -574,7 +574,7 @@ export function Banking() {
 
       {/* ── ACH Deposit / Withdraw ── */}
       {accounts.length > 0 && (
-        <div className="bg-[#1E1E24] rounded-2xl p-6">
+        <div className="surface-2 border border-default rounded-2xl p-6">
 
           {/* ACH badge */}
           <div className="flex items-center gap-2 mb-5">
@@ -585,12 +585,12 @@ export function Banking() {
           </div>
 
           {/* Deposit | Withdraw toggle */}
-          <div className="flex gap-1 bg-black rounded-full p-1 mb-5 w-fit">
+          <div className="flex gap-1 surface-3 border border-default rounded-full p-1 mb-5 w-fit">
             {(["deposit", "withdraw"] as const).map(tab => (
               <button key={tab}
                 onClick={() => { setActiveForm(tab); setFormResult(null); }}
                 className={`px-5 py-1.5 rounded-full text-sm font-bold capitalize transition-colors ${
-                  activeForm === tab ? "bg-white text-black" : "text-gray-400 hover:text-white"
+                  activeForm === tab ? "bg-white text-black" : "text-gray-400 hover:app-fg"
                 }`}>
                 {tab}
               </button>
@@ -630,7 +630,7 @@ export function Banking() {
           <h3 className="text-lg font-semibold">Transfer History</h3>
           {address && (
             <button onClick={() => fetchTransfers(address)} disabled={transfersLoading}
-              className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-white transition-colors disabled:opacity-40">
+              className="flex items-center gap-1.5 text-xs text-gray-400 hover:app-fg transition-colors disabled:opacity-40">
               <RefreshCw className={`w-3 h-3 ${transfersLoading ? "animate-spin" : ""}`} />
               Refresh
             </button>
@@ -646,7 +646,7 @@ export function Banking() {
             <p className="text-gray-500 text-sm">No transfers yet.</p>
           </div>
         ) : (
-          <div className="bg-[#1A1B1F] rounded-2xl overflow-hidden divide-y divide-gray-800">
+          <div className="surface-3 border border-default rounded-2xl overflow-hidden divide-y divide-gray-800">
             {transfers.map(t => (
               <TransferRow
                 key={t.transferId}

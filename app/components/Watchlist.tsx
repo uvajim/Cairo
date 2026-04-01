@@ -35,17 +35,17 @@ export function Watchlist() {
   const today = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
   return (
-    <div className="bg-black border-l border-gray-800 h-full w-full max-w-sm ml-auto">
+    <div className="surface-1 border-l border-default h-full w-full max-w-sm ml-auto">
       <div className="p-6 space-y-8">
 
         {/* Header */}
-        <h2 className="text-xl font-medium text-white">{t("watchlist.markets")}</h2>
+        <h2 className="text-xl font-medium app-fg">{t("watchlist.markets")}</h2>
 
         {/* Indices */}
         <div>
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-medium text-gray-400 text-sm">{t("watchlist.indices")}</h3>
-            <span className="text-xs text-gray-500">{today}</span>
+            <h3 className="font-medium text-muted text-sm">{t("watchlist.indices")}</h3>
+            <span className="text-xs text-soft">{today}</span>
           </div>
           <div className="grid grid-cols-3 gap-2">
             {INDICES.map(({ name, etf }) => {
@@ -55,7 +55,7 @@ export function Watchlist() {
                 <Link
                   to={`/stock/${etf}`}
                   key={etf}
-                  className="bg-[#1E1E24] rounded-xl p-3 flex flex-col items-center justify-center text-center hover:bg-gray-800 transition-colors"
+                  className="surface-2 rounded-xl p-3 flex flex-col items-center justify-center text-center border border-default hover-surface transition-colors"
                 >
                   <div className={`w-6 h-6 rounded-full flex items-center justify-center mb-2 ${isUp ? "bg-green-500/10 text-[#00c805]" : "bg-red-500/10 text-[#ff5000]"}`}>
                     {isUp ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
@@ -65,9 +65,9 @@ export function Watchlist() {
                       {isUp ? "+" : ""}{q.changePercent.toFixed(2)}%
                     </span>
                   ) : (
-                    <div className="h-4 w-10 bg-gray-800 animate-pulse rounded mb-1" />
+                    <div className="h-4 w-10 surface-3 animate-pulse rounded mb-1" />
                   )}
-                  <span className="text-xs font-medium text-gray-400">{name}</span>
+                  <span className="text-xs font-medium text-muted">{name}</span>
                 </Link>
               );
             })}
@@ -76,7 +76,7 @@ export function Watchlist() {
 
         {/* Top Movers */}
         <div>
-          <h3 className="font-medium text-gray-400 text-sm mb-4">{t("watchlist.topMovers")}</h3>
+          <h3 className="font-medium text-muted text-sm mb-4">{t("watchlist.topMovers")}</h3>
           <div className="flex flex-wrap gap-2">
             {TOP_MOVERS.map((symbol) => {
               const q    = quotes[symbol];
@@ -85,16 +85,16 @@ export function Watchlist() {
                 <Link
                   to={`/stock/${symbol}`}
                   key={symbol}
-                  className="flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-full border border-gray-800 hover:border-gray-600 transition-all bg-[#1E1E24]"
+                  className="flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-full border border-default transition-all surface-2 hover-surface"
                 >
-                  <span className="font-bold text-sm">{symbol}</span>
+                  <span className="font-bold text-sm app-fg">{symbol}</span>
                   {q ? (
                     <span className={`flex items-center text-xs font-bold ${isUp ? "text-[#00c805]" : "text-[#ff5000]"}`}>
                       {isUp ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
                       {Math.abs(q.changePercent).toFixed(2)}%
                     </span>
                   ) : (
-                    <div className="h-3 w-8 bg-gray-800 animate-pulse rounded" />
+                    <div className="h-3 w-8 surface-3 animate-pulse rounded" />
                   )}
                 </Link>
               );
@@ -104,7 +104,7 @@ export function Watchlist() {
 
         {/* Popular Stocks */}
         <div>
-          <h3 className="font-medium text-gray-400 text-sm mb-4">{t("watchlist.popularStocks")}</h3>
+          <h3 className="font-medium text-muted text-sm mb-4">{t("watchlist.popularStocks")}</h3>
           <div className="space-y-3">
             {POPULAR.map((stock) => {
               const q     = quotes[stock.symbol];
@@ -113,21 +113,21 @@ export function Watchlist() {
                 <Link
                   to={`/stock/${stock.symbol}`}
                   key={stock.symbol}
-                  className="bg-[#1E1E24] p-4 rounded-xl flex items-center justify-between hover:bg-gray-800 transition-colors"
+                  className="surface-2 p-4 rounded-xl flex items-center justify-between border border-default hover-surface transition-colors"
                 >
                   <div className="flex items-center gap-3">
                     <div className={`w-10 h-10 rounded-full ${stock.color} flex items-center justify-center text-white font-bold text-xs`}>
                       {stock.symbol.slice(0, 1)}
                     </div>
                     <div>
-                      <div className="font-bold text-sm">{stock.symbol}</div>
-                      <div className="text-xs text-gray-400 truncate max-w-[160px]">{stock.name}</div>
+                      <div className="font-bold text-sm app-fg">{stock.symbol}</div>
+                      <div className="text-xs text-muted truncate max-w-[160px]">{stock.name}</div>
                     </div>
                   </div>
                   <div className="text-right">
                     {q ? (
                       <>
-                        <div className="font-medium text-sm">
+                        <div className="font-medium text-sm app-fg">
                           ${q.price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                         <div className={`text-xs font-medium ${isUp ? "text-[#00c805]" : "text-[#ff5000]"}`}>
@@ -135,7 +135,7 @@ export function Watchlist() {
                         </div>
                       </>
                     ) : (
-                      <div className="h-8 w-14 bg-gray-800 animate-pulse rounded" />
+                      <div className="h-8 w-14 surface-3 animate-pulse rounded" />
                     )}
                   </div>
                 </Link>

@@ -5,8 +5,9 @@ import { Link } from "react-router";
 import Image from "next/image";
 import { Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { usePublicClient } from "wagmi";
 import { useWallet } from "../contexts/WalletContext";
-import { BACKEND_URL, ASSETS_URL } from "../lib/config";
+import { BACKEND_URL, EQUITY_VAULT_ADDRESS, EQUITY_VAULT_ABI, CHAIN_ID } from "../lib/config";
 import { holdingsCache } from "../lib/holdingsCache";
 
 function HoldingRow({
@@ -26,7 +27,7 @@ function HoldingRow({
   return (
     <Link
       to={`/stock/${ticker}`}
-      className="flex items-center justify-between py-4 border-b border-gray-800 last:border-0 hover:bg-gray-900 -mx-1 px-1 rounded-lg transition-colors"
+      className="flex items-center justify-between py-4 border-b border-default last:border-0 hover-surface -mx-1 px-1 rounded-lg transition-colors"
     >
       <div className="flex items-center gap-3">
         {!imgError ? (
@@ -70,6 +71,7 @@ function HoldingRow({
 export function PortfolioHoldings() {
   const { t } = useTranslation();
   const { address } = useWallet();
+  const publicClient = usePublicClient({ chainId: CHAIN_ID });
 
   const cached = holdingsCache.address === address;
   const [holdings,      setHoldings]      = useState<Record<string, number>>(cached ? holdingsCache.holdings : {});
@@ -77,9 +79,8 @@ export function PortfolioHoldings() {
   const [loading,       setLoading]       = useState(!cached);
 
   useEffect(() => {
-    if (!address) { setHoldings({}); setHoldingPrices({}); return; }
+    if (!address || !publicClient) { setHoldings({}); setHoldingPrices({}); return; }
 
-    // Already have fresh data from the Overview poll
     if (holdingsCache.address === address && Object.keys(holdingsCache.holdings).length > 0) {
       setHoldings(holdingsCache.holdings);
       setHoldingPrices(holdingsCache.prices);
@@ -92,25 +93,57 @@ export function PortfolioHoldings() {
 
     const fetchHoldings = async () => {
       try {
-        const res  = await fetch(ASSETS_URL, {
-          method:  "POST",
-          headers: { "Content-Type": "application/json" },
-          body:    JSON.stringify({ walletAddress: address }),
+        // 1. How many tickers have ever been minted?
+        const count = await publicClient.readContract({
+          address: EQUITY_VAULT_ADDRESS,
+          abi:     EQUITY_VAULT_ABI,
+          functionName: 'tickerCount',
+        }) as bigint;
+
+        // 2. Read all ticker strings in parallel
+        const tickerCalls = Array.from({ length: Number(count) }, (_, i) => ({
+          address:      EQUITY_VAULT_ADDRESS,
+          abi:          EQUITY_VAULT_ABI,
+          functionName: 'allTickers' as const,
+          args:         [BigInt(i)] as const,
+        }));
+        const tickerResults = count > 0n
+          ? await publicClient.multicall({ contracts: tickerCalls })
+          : [];
+        const tickers = tickerResults
+          .map(r => r.status === 'success' ? (r.result as string) : null)
+          .filter((t): t is string => t !== null);
+
+        // 3. Read balances for this wallet in parallel
+        const balanceCalls = tickers.map(ticker => ({
+          address:      EQUITY_VAULT_ADDRESS,
+          abi:          EQUITY_VAULT_ABI,
+          functionName: 'balanceOfTicker' as const,
+          args:         [address as `0x${string}`, ticker] as const,
+        }));
+        const balanceResults = tickers.length > 0
+          ? await publicClient.multicall({ contracts: balanceCalls })
+          : [];
+
+        const h: Record<string, number> = {};
+        balanceResults.forEach((r, i) => {
+          if (r.status === 'success' && (r.result as bigint) > 0n)
+            h[tickers[i]] = Number(r.result as bigint) / 1_000_000;
         });
-        const data = await res.json();
-        const h: Record<string, number> = data?.holdings ?? {};
+
         if (cancelled) return;
         setHoldings(h);
 
-        const tickers = Object.keys(h);
-        if (tickers.length === 0) { setLoading(false); return; }
+        // 4. Fetch live prices for non-zero holdings
+        const heldTickers = Object.keys(h);
+        if (heldTickers.length === 0) { setLoading(false); return; }
 
-        const snapRes  = await fetch(`${BACKEND_URL}/api/market/snapshots?symbols=${tickers.join(",")}`);
+        const snapRes  = await fetch(`${BACKEND_URL}/api/market/snapshots?symbols=${heldTickers.join(",")}`);
         const snapData = await snapRes.json();
         if (cancelled) return;
 
         const prices: Record<string, number> = {};
-        for (const ticker of tickers) {
+        for (const ticker of heldTickers) {
           prices[ticker] = snapData[ticker]?.price ?? 0;
         }
         setHoldingPrices(prices);
@@ -123,7 +156,7 @@ export function PortfolioHoldings() {
 
     fetchHoldings();
     return () => { cancelled = true; };
-  }, [address]);
+  }, [address, publicClient]);
 
   const totalValue = Object.entries(holdings).reduce(
     (sum, [ticker, qty]) => sum + qty * (holdingPrices[ticker] ?? 0),
@@ -131,35 +164,35 @@ export function PortfolioHoldings() {
   );
 
   return (
-    <div className="max-w-3xl mx-auto px-6 py-8">
+    <div className="max-w-3xl mx-auto px-6 py-8 app-fg">
       <div className="mb-8">
         <h2 className="text-3xl font-bold mb-1">{t("portfolio.title")}</h2>
-        <p className="text-gray-400 text-sm">{t("portfolio.subtitle")}</p>
+        <p className="text-muted text-sm">{t("portfolio.subtitle")}</p>
       </div>
 
       {!address && (
-        <div className="flex flex-col items-center justify-center py-16 text-center border border-gray-800 rounded-2xl">
-          <p className="text-gray-400 text-sm">{t("portfolio.connectPrompt")}</p>
+        <div className="flex flex-col items-center justify-center py-16 text-center border border-default rounded-2xl">
+          <p className="text-muted text-sm">{t("portfolio.connectPrompt")}</p>
         </div>
       )}
 
       {address && loading && (
-        <div className="flex items-center justify-center py-16 gap-3 text-gray-400">
+        <div className="flex items-center justify-center py-16 gap-3 text-muted">
           <Loader2 className="w-5 h-5 animate-spin" />
           <span className="text-sm">{t("portfolio.loading")}</span>
         </div>
       )}
 
       {address && !loading && Object.keys(holdings).length === 0 && (
-        <div className="flex flex-col items-center justify-center py-16 text-center border border-gray-800 rounded-2xl">
-          <p className="text-gray-400 text-sm">{t("portfolio.empty")}</p>
+        <div className="flex flex-col items-center justify-center py-16 text-center border border-default rounded-2xl">
+          <p className="text-muted text-sm">{t("portfolio.empty")}</p>
         </div>
       )}
 
       {address && !loading && Object.keys(holdings).length > 0 && (
         <>
           {/* Total value card */}
-          <div className="bg-[#1E1E24] rounded-2xl px-6 py-5 mb-6 flex items-center justify-between">
+          <div className="surface-2 border border-default rounded-2xl px-6 py-5 mb-6 flex items-center justify-between">
             <span className="text-sm text-gray-400">{t("portfolio.totalValue")}</span>
             <span className="text-xl font-bold">
               ${totalValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -167,7 +200,7 @@ export function PortfolioHoldings() {
           </div>
 
           {/* Holdings list */}
-          <div className="bg-[#1E1E24] rounded-2xl px-6 py-2">
+          <div className="surface-2 border border-default rounded-2xl px-6 py-2">
             {Object.entries(holdings).map(([ticker, qty]) => {
               const price = holdingPrices[ticker] ?? 0;
               return (

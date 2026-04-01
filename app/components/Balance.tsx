@@ -145,11 +145,11 @@ function MethodPicker({ value, onChange }: {
   onChange: (v: "stablecoins" | "ach") => void;
 }) {
   return (
-    <div className="flex gap-1 bg-black rounded-full p-1 w-fit">
+    <div className="flex gap-1 surface-3 rounded-full p-1 w-fit border border-default">
       {(["stablecoins", "ach"] as const).map(m => (
         <button key={m} onClick={() => onChange(m)}
           className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-colors ${
-            value === m ? "bg-white text-black" : "text-gray-400 hover:text-white"
+            value === m ? "bg-white text-black" : "text-muted hover:app-fg"
           }`}>
           {m === "stablecoins"
             ? <><Wallet   className="w-3 h-3" /> Stablecoins</>
@@ -168,6 +168,14 @@ const STABLECOIN_PRESETS = [50, 100, 250, 500, 1000];
 export function Balance() {
   const { t } = useTranslation();
   const { address, usdBalance, accountBalance, connect, refreshBalance } = useWallet();
+
+  const [copied, setCopied] = useState(false);
+  function copyAddress() {
+    if (!address) return;
+    navigator.clipboard.writeText(address);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
 
   // ── Panel visibility ───────────────────────────────────────────────────────
   const [showDepositPanel,  setShowDepositPanel]  = useState(false);
@@ -596,7 +604,7 @@ export function Balance() {
           <p className="text-xs text-gray-400 mt-0.5">ACH settles in 1–3 business days.</p>
         </div>
         <button onClick={resetAchForm}
-          className="text-xs font-bold text-gray-400 hover:text-white transition-colors">
+          className="text-xs font-bold text-gray-400 hover:app-fg transition-colors">
           New transfer
         </button>
       </div>
@@ -629,7 +637,7 @@ export function Balance() {
                   setAchAccountId(e.target.value);
                 }
               }}
-              className="w-full bg-black border border-gray-700 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-white/30 transition-colors appearance-none">
+              className="w-full surface-1 border border-default rounded-xl px-3 py-2 text-sm app-fg outline-none focus:border-[#00c805]/40 transition-colors appearance-none">
               {achAccounts.map(a => (
                 <option key={a.id} value={a.id}>{a.name} ···{a.mask}</option>
               ))}
@@ -648,11 +656,11 @@ export function Balance() {
 
         <div>
           <label className="text-xs text-gray-400 mb-1.5 block">Amount (USD)</label>
-          <div className="bg-black border border-gray-700 rounded-xl px-4 py-3 flex items-center gap-2 focus-within:border-white/30 transition-colors">
+          <div className="surface-1 border border-default rounded-xl px-4 py-3 flex items-center gap-2 focus-within:border-[#00c805]/40 transition-colors">
             <span className="text-gray-500 text-sm">$</span>
             <input type="number" min="1" step="0.01" placeholder="0.00"
               value={achAmount} onChange={e => setAchAmount(e.target.value)}
-              className="bg-transparent text-2xl font-bold text-white outline-none flex-1 w-0" />
+              className="bg-transparent text-2xl font-bold app-fg outline-none flex-1 w-0" />
           </div>
         </div>
 
@@ -662,7 +670,7 @@ export function Balance() {
           </label>
           <input type="text" placeholder="First Last"
             value={achLegalName} onChange={e => setAchLegalName(e.target.value)}
-            className="w-full bg-black border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 outline-none focus:border-white/30 transition-colors" />
+            className="w-full surface-1 border border-default rounded-xl px-4 py-2.5 text-sm app-fg placeholder:text-muted outline-none focus:border-[#00c805]/40 transition-colors" />
         </div>
 
         {achError && <p className="text-xs text-[#ff5000]">{achError}</p>}
@@ -691,7 +699,7 @@ export function Balance() {
   // ── Not connected ──────────────────────────────────────────────────────────
   if (!address) {
     return (
-      <div className="max-w-3xl mx-auto px-6 py-8">
+      <div className="max-w-3xl mx-auto px-6 py-8 app-fg">
         <div className="mb-6">
           <h2 className="text-3xl font-bold mb-1">{t("balance.title")}</h2>
           <p className="text-gray-400 text-sm">{t("balance.subtitle")}</p>
@@ -709,14 +717,14 @@ export function Balance() {
 
   // ── Main render ────────────────────────────────────────────────────────────
   return (
-    <div className="max-w-3xl mx-auto px-6 py-8">
+    <div className="max-w-3xl mx-auto px-6 py-8 app-fg">
       <div className="mb-8">
         <h2 className="text-3xl font-bold mb-1">{t("balance.title")}</h2>
         <p className="text-gray-400 text-sm">{t("balance.subtitle")}</p>
       </div>
 
       {/* Big balance card */}
-      <div className="bg-[#1E1E24] rounded-2xl px-8 py-8 mb-3 flex items-center justify-between">
+      <div className="surface-2 border border-default rounded-2xl px-8 py-8 mb-3 flex items-center justify-between">
         <div>
           <p className="text-sm text-gray-400 mb-2">{t("balance.totalAccount")}</p>
           <p className="text-4xl font-bold tracking-tight">
@@ -756,7 +764,7 @@ export function Balance() {
 
       {/* ── Deposit panel ── */}
       {showDepositPanel && (
-        <div className="bg-[#1E1E24] rounded-2xl px-6 py-5 mb-3 space-y-5">
+        <div className="surface-2 border border-default rounded-2xl px-6 py-5 mb-3 space-y-5">
           {/* Method picker — hide while tx is in progress */}
           {txStep === "idle" && (
             <MethodPicker value={depositMethod}
@@ -771,24 +779,24 @@ export function Balance() {
                   <div className="flex flex-wrap gap-2">
                     {STABLECOIN_PRESETS.map(p => (
                       <button key={p} onClick={() => { setSelectedAmount(p); setCustomAmount(""); }}
-                        className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${selectedAmount === p ? "bg-white text-black" : "bg-[#2A2B30] text-gray-300 hover:bg-gray-700"}`}>
+                        className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${selectedAmount === p ? "bg-white text-black" : "surface-3 border border-default text-gray-300 hover:bg-gray-700"}`}>
                         ${p}
                       </button>
                     ))}
                     <button onClick={() => { setSelectedAmount(null); setCustomAmount(""); }}
-                      className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${selectedAmount === null && customAmount === "" ? "bg-white text-black" : "bg-[#2A2B30] text-gray-300 hover:bg-gray-700"}`}>
+                      className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${selectedAmount === null && customAmount === "" ? "bg-white text-black" : "surface-3 border border-default text-gray-300 hover:bg-gray-700"}`}>
                       {t("overview.other")}
                     </button>
                   </div>
                   {selectedAmount === null && (
                     <input type="number" min="1" placeholder={t("overview.enterAmount")} value={customAmount}
                       onChange={e => setCustomAmount(e.target.value)}
-                      className="w-full bg-black border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 outline-none focus:border-white/30" />
+                      className="w-full surface-1 border border-default rounded-xl px-4 py-2.5 text-sm app-fg placeholder:text-muted outline-none focus:border-[#00c805]/40" />
                   )}
                   <div className="flex gap-2">
                     {(["USDC", "USDT"] as const).map(tok => (
                       <button key={tok} onClick={() => setSelectedToken(tok)}
-                        className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${selectedToken === tok ? "bg-white text-black" : "bg-[#2A2B30] text-gray-300 hover:bg-gray-700"}`}>
+                        className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${selectedToken === tok ? "bg-white text-black" : "surface-3 border border-default text-gray-300 hover:bg-gray-700"}`}>
                         {tok}
                       </button>
                     ))}
@@ -809,11 +817,11 @@ export function Balance() {
                   {!skipApprove && (
                     <div className="flex items-center gap-3">
                       <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-xs font-bold
-                        ${txStep === "depositing" ? "bg-[#00c805] text-black" : txStep === "approving" ? "bg-white text-black" : "bg-[#2A2B30] text-gray-500"}`}>
+                        ${txStep === "depositing" ? "bg-[#00c805] text-black" : txStep === "approving" ? "bg-white text-black" : "surface-3 border border-default text-gray-500"}`}>
                         {txStep === "depositing" ? "✓" : "1"}
                       </div>
                       <div>
-                        <p className={`text-sm font-semibold ${txStep === "approving" ? "text-white" : "text-gray-500"}`}>
+                        <p className={`text-sm font-semibold ${txStep === "approving" ? "app-fg" : "text-gray-500"}`}>
                           {`Approve ${selectedToken}`}
                         </p>
                         {txStep === "approving" && <p className="text-xs text-gray-400">Waiting for wallet…</p>}
@@ -825,11 +833,11 @@ export function Balance() {
                   {/* Step 2 (or 1 if skipped approve): Deposit */}
                   <div className="flex items-center gap-3">
                     <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-xs font-bold
-                      ${txStep === "depositing" ? "bg-white text-black" : "bg-[#2A2B30] text-gray-500"}`}>
+                      ${txStep === "depositing" ? "bg-white text-black" : "surface-3 border border-default text-gray-500"}`}>
                       {skipApprove ? "1" : "2"}
                     </div>
                     <div>
-                      <p className={`text-sm font-semibold ${txStep === "depositing" ? "text-white" : "text-gray-500"}`}>
+                      <p className={`text-sm font-semibold ${txStep === "depositing" ? "app-fg" : "text-gray-500"}`}>
                         Confirm deposit
                       </p>
                       {txStep === "depositing" && <p className="text-xs text-gray-400">Waiting for wallet…</p>}
@@ -840,7 +848,7 @@ export function Balance() {
                     <div className="space-y-2">
                       <p className="text-xs text-[#ff5000]">{txErrMsg ?? "Transaction failed."}</p>
                       <button onClick={() => { setTxStep("idle"); setTxErrMsg(null); }}
-                        className="text-xs text-gray-400 hover:text-white transition-colors">Try again</button>
+                        className="text-xs text-gray-400 hover:app-fg transition-colors">Try again</button>
                     </div>
                   )}
                 </div>
@@ -857,12 +865,12 @@ export function Balance() {
                   </div>
                   {depositTxHash && (
                     <a href={`https://sepolia.etherscan.io/tx/${depositTxHash}`} target="_blank" rel="noopener noreferrer"
-                      className="text-xs font-mono text-gray-500 hover:text-white transition-colors break-all">
+                      className="text-xs font-mono text-gray-500 hover:app-fg transition-colors break-all">
                       {depositTxHash.slice(0, 10)}…{depositTxHash.slice(-8)}
                     </a>
                   )}
                   <button onClick={() => { setTxStep("idle"); setShowDepositPanel(false); }}
-                    className="text-xs font-bold text-gray-400 hover:text-white transition-colors">Close</button>
+                    className="text-xs font-bold text-gray-400 hover:app-fg transition-colors">Close</button>
                 </div>
               )}
             </>
@@ -875,7 +883,7 @@ export function Balance() {
 
       {/* ── Withdraw panel ── */}
       {showWithdrawPanel && (
-        <div className="bg-[#1E1E24] rounded-2xl px-6 py-5 mb-3 space-y-5">
+        <div className="surface-2 border border-default rounded-2xl px-6 py-5 mb-3 space-y-5">
           <MethodPicker value={withdrawMethod}
             onChange={m => { setWithdrawMethod(m); setWithdrawAmount(""); setWdStep("idle"); setWdErrMsg(null); resetAchForm(); }} />
 
@@ -889,18 +897,18 @@ export function Balance() {
                     {(["USDC", "USDT"] as const).map(tok => (
                       <button key={tok} onClick={() => setWithdrawToken(tok)}
                         className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${
-                          withdrawToken === tok ? "bg-white text-black" : "bg-[#2A2B30] text-gray-300 hover:bg-gray-700"
+                          withdrawToken === tok ? "bg-white text-black" : "surface-3 border border-default text-gray-300 hover:bg-gray-700"
                         }`}>
                         {tok}
                       </button>
                     ))}
                   </div>
-                  <div className="bg-black border border-gray-700 rounded-xl px-4 py-3 focus-within:border-white/30 transition-colors">
+                  <div className="surface-1 border border-default rounded-xl px-4 py-3 focus-within:border-[#00c805]/40 transition-colors">
                     <div className="flex items-center gap-2">
                       <span className="text-gray-500 text-sm">$</span>
                       <input type="number" min="0" step="any" placeholder="0.00"
                         value={withdrawAmount} onChange={e => setWithdrawAmount(e.target.value)}
-                        className="bg-transparent text-2xl font-bold text-white outline-none flex-1 w-0" />
+                        className="bg-transparent text-2xl font-bold app-fg outline-none flex-1 w-0" />
                       <button onClick={() => setWithdrawAmount(maxWithdrawable.toFixed(2))}
                         className="text-xs font-bold text-[#00c805] hover:text-[#00b004] transition-colors shrink-0">
                         {t("balance.max")}
@@ -939,7 +947,7 @@ export function Balance() {
                 <div className="space-y-2 py-2">
                   <p className="text-xs text-[#ff5000]">{wdErrMsg}</p>
                   <button onClick={() => { setWdStep("idle"); setWdErrMsg(null); }}
-                    className="text-xs text-gray-400 hover:text-white transition-colors">
+                    className="text-xs text-gray-400 hover:app-fg transition-colors">
                     Try again
                   </button>
                 </div>
@@ -956,12 +964,12 @@ export function Balance() {
                   </div>
                   {withdrawHash && (
                     <a href={`https://sepolia.etherscan.io/tx/${withdrawHash}`} target="_blank" rel="noopener noreferrer"
-                      className="text-xs font-mono text-gray-500 hover:text-white transition-colors break-all">
+                      className="text-xs font-mono text-gray-500 hover:app-fg transition-colors break-all">
                       {withdrawHash.slice(0, 10)}…{withdrawHash.slice(-8)}
                     </a>
                   )}
                   <button onClick={() => { setWdStep("idle"); setShowWithdrawPanel(false); }}
-                    className="text-xs font-bold text-gray-400 hover:text-white transition-colors">
+                    className="text-xs font-bold text-gray-400 hover:app-fg transition-colors">
                     Close
                   </button>
                 </div>
@@ -975,21 +983,24 @@ export function Balance() {
       )}
 
       {/* Wallet address row */}
-      <div className="bg-[#1E1E24] rounded-2xl px-6 py-5 mb-8 flex items-center justify-between">
+      <div className="surface-2 border border-default rounded-2xl px-6 py-5 mb-8 flex items-center justify-between">
         <span className="text-sm text-gray-400">{t("balance.walletAddress")}</span>
         <div className="flex items-center">
-          <div className="bg-black px-3 py-1.5 rounded-full text-sm text-gray-300 font-normal pr-6 -mr-4 z-0 border border-gray-800">
+          <div className="surface-1 px-3 py-1.5 rounded-full text-sm text-muted font-normal pr-6 -mr-4 z-0 border border-default">
             {usdBalance.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
           </div>
-          <div className="flex items-center gap-1.5 bg-[#2A2B30] border border-gray-700 px-3 py-1.5 rounded-full text-sm font-bold z-10 relative">
+          <button
+            onClick={copyAddress}
+            className="flex items-center gap-1.5 surface-3 border border-default px-3 py-1.5 rounded-full text-sm font-bold z-10 relative hover-surface transition-colors cursor-pointer"
+          >
             <span className="w-2 h-2 rounded-full bg-[#00c805] inline-block" />
-            {address}
-          </div>
+            {copied ? "Copied!" : address}
+          </button>
         </div>
       </div>
 
       {/* Debit card teaser */}
-      <div className="relative bg-[#1E1E24] rounded-2xl overflow-hidden mb-8">
+      <div className="relative surface-2 border border-default rounded-2xl overflow-hidden mb-8">
         <div className="absolute inset-0 bg-gradient-to-br from-[#00c805]/10 via-transparent to-transparent pointer-events-none" />
         <div className="relative px-6 py-5 flex items-center gap-4">
           <div className="shrink-0 w-12 h-8 rounded-md bg-gradient-to-br from-gray-700 to-gray-900 border border-gray-600 flex flex-col justify-between p-1 shadow-lg">
@@ -1028,7 +1039,7 @@ export function Balance() {
         )}
 
         {feedItems.length > 0 && (
-          <div className="bg-[#1A1B1F] rounded-2xl overflow-hidden divide-y divide-gray-800">
+          <div className="surface-3 border border-default rounded-2xl overflow-hidden divide-y divide-gray-800">
             {feedItems.map(item => {
               // ── Stock/cash orders ────────────────────────────────────────────
               if (item.kind === "order") {
@@ -1128,7 +1139,7 @@ export function Balance() {
                         </div>
                         {item.txHash && (
                           <a href={`https://sepolia.etherscan.io/tx/${item.txHash}`} target="_blank" rel="noopener noreferrer"
-                            className="text-xs font-mono text-gray-500 hover:text-white transition-colors">
+                            className="text-xs font-mono text-gray-500 hover:app-fg transition-colors">
                             {item.txHash.slice(0, 8)}…{item.txHash.slice(-6)}
                           </a>
                         )}

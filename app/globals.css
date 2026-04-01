@@ -25,6 +25,144 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+body.theme-dark {
+  color-scheme: dark;
+  --background: #0a0a0a;
+  --foreground: #ededed;
+}
+
+body.theme-light {
+  color-scheme: light;
+  --background: #f8fafc;
+  --foreground: #111827;
+}
+
+/* Light-mode overrides for legacy Tailwind utilities (html + body for theme class) */
+html.theme-light .bg-black,
+body.theme-light .bg-black { background-color: #f8fafc !important; }
+html.theme-light .bg-black\/60,
+body.theme-light .bg-black\/60 { background-color: rgba(15, 23, 42, 0.45) !important; }
+html.theme-light .bg-black\/70,
+body.theme-light .bg-black\/70 { background-color: rgba(15, 23, 42, 0.5) !important; }
+html.theme-light .bg-black\/80,
+body.theme-light .bg-black\/80 { background-color: rgba(15, 23, 42, 0.55) !important; }
+html.theme-light .bg-\[\#1A1B1F\],
+html.theme-light .bg-\[\#1E1E24\],
+html.theme-light .bg-\[\#2A2B30\],
+body.theme-light .bg-\[\#1A1B1F\],
+body.theme-light .bg-\[\#1E1E24\],
+body.theme-light .bg-\[\#2A2B30\] { background-color: #ffffff !important; }
+html.theme-light .text-white,
+body.theme-light .text-white { color: #111827 !important; }
+html.theme-light .text-gray-500,
+body.theme-light .text-gray-500 { color: #64748b !important; }
+html.theme-light .text-gray-400,
+html.theme-light .text-gray-300,
+body.theme-light .text-gray-400,
+body.theme-light .text-gray-300 { color: #475569 !important; }
+html.theme-light .border-gray-900,
+html.theme-light .border-gray-800,
+html.theme-light .border-gray-700,
+body.theme-light .border-gray-900,
+body.theme-light .border-gray-800,
+body.theme-light .border-gray-700 { border-color: #e2e8f0 !important; }
+html.theme-light .divide-gray-800 > :not([hidden]) ~ :not([hidden]),
+body.theme-light .divide-gray-800 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #e2e8f0 !important;
+}
+html.theme-light .hover\:bg-gray-800:hover,
+body.theme-light .hover\:bg-gray-800:hover { background-color: #f1f5f9 !important; }
+html.theme-light .hover\:bg-gray-900:hover,
+body.theme-light .hover\:bg-gray-900:hover { background-color: #f1f5f9 !important; }
+html.theme-light .selection\:bg-gray-800 ::selection,
+html.theme-light .selection\:bg-gray-800::selection,
+body.theme-light .selection\:bg-gray-800 ::selection,
+body.theme-light .selection\:bg-gray-800::selection { background-color: #dbeafe !important; }
+
+/* Semantic theme tokens — follow system colors until html gets theme-light / theme-dark */
+:root {
+  --app-bg: var(--background);
+  --app-fg: var(--foreground);
+  --surface-1: var(--background);
+  --surface-2: #f1f5f9;
+  --surface-3: #ffffff;
+  --border-default: #e2e8f0;
+  --text-muted: #64748b;
+  --text-soft: #94a3b8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-1: #0a0a0a;
+    --surface-2: #1e1e24;
+    --surface-3: #1a1b1f;
+    --border-default: #1f2937;
+    --text-muted: #9ca3af;
+    --text-soft: #6b7280;
+  }
+}
+
+html.theme-light,
+body.theme-light {
+  --app-bg: #f8fafc;
+  --app-fg: #111827;
+  --surface-1: #f8fafc;
+  --surface-2: #ffffff;
+  --surface-3: #f1f5f9;
+  --border-default: #e2e8f0;
+  --text-muted: #64748b;
+  --text-soft: #94a3b8;
+}
+
+html.theme-dark,
+body.theme-dark {
+  --app-bg: #0a0a0a;
+  --app-fg: #ededed;
+  --surface-1: #000000;
+  --surface-2: #1e1e24;
+  --surface-3: #1a1b1f;
+  --border-default: #1f2937;
+  --text-muted: #9ca3af;
+  --text-soft: #6b7280;
+}
+
+.app-bg { background-color: var(--app-bg); }
+.app-fg { color: var(--app-fg); }
+.surface-1 { background-color: var(--surface-1); }
+.surface-2 { background-color: var(--surface-2); }
+.surface-3 { background-color: var(--surface-3); }
+.border-default { border-color: var(--border-default); }
+.text-muted { color: var(--text-muted); }
+.text-soft { color: var(--text-soft); }
+.hover-surface:hover { background-color: color-mix(in oklab, var(--surface-2) 88%, var(--app-fg) 12%); }
+
+/* Logo: invert on dark backgrounds only */
+html.theme-dark .logo-maritime,
+body.theme-dark .logo-maritime {
+  filter: invert(1);
+}
+html.theme-light .logo-maritime,
+body.theme-light .logo-maritime {
+  filter: none;
+}
+
+/* Modal / overlay scrim — theme-aware */
+.modal-scrim {
+  background-color: rgba(0, 0, 0, 0.6);
+}
+html.theme-light .modal-scrim,
+body.theme-light .modal-scrim {
+  background-color: rgba(15, 23, 42, 0.45);
+}
+
+.modal-scrim-heavy {
+  background-color: rgba(0, 0, 0, 0.8);
+}
+html.theme-light .modal-scrim-heavy,
+body.theme-light .modal-scrim-heavy {
+  background-color: rgba(15, 23, 42, 0.55);
+}
+
 /* ── Dhow Exchange shared component styles ── */
 
 .card {

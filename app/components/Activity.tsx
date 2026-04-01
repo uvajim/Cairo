@@ -81,7 +81,7 @@ export function Activity() {
       )}
 
       {orders.length > 0 && (
-        <div className="bg-[#1A1B1F] rounded-2xl overflow-hidden divide-y divide-gray-800">
+        <div className="surface-3 border border-default rounded-2xl overflow-hidden divide-y divide-gray-800">
           {orders.map(order => {
             const isBuy  = order.side === 'buy' || (!order.side && order.estimatedCost !== undefined);
             const value  = order.tradeValue ?? order.estimatedCost ?? 0;

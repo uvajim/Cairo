@@ -66,7 +66,7 @@ export function Pools() {
       </div>
 
       {/* Pools List */}
-      <div className="bg-[#1A1B1F] rounded-2xl overflow-hidden">
+      <div className="surface-3 border border-default rounded-2xl overflow-hidden">
         <div className="p-6 border-b border-gray-800">
           <h3 className="text-lg font-semibold">Top Pools</h3>
         </div>
@@ -90,10 +90,10 @@ export function Pools() {
             >
               <div className="flex items-center gap-3">
                 <div className="flex -space-x-2">
-                  <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center border-2 border-[#1A1B1F] text-sm font-bold">
+                  <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center border-2 border-default text-sm font-bold">
                     {pool.pair.split('/')[0].slice(0, 1)}
                   </div>
-                  <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-full flex items-center justify-center border-2 border-[#1A1B1F] text-sm font-bold">
+                  <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-full flex items-center justify-center border-2 border-default text-sm font-bold">
                     {pool.pair.split('/')[1].slice(0, 1)}
                   </div>
                 </div>

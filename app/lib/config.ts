@@ -2,6 +2,10 @@
 // through the Next.js backend to keep API keys server-side.
 export const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "https://cairo-backend-production-67f8.up.railway.app";
 
+// Maritime Stack backend — trade offers, balances, ticker info.
+export const MARITIME_API_URL = process.env.NEXT_PUBLIC_MARITIME_API_URL ?? "http://localhost:3001";
+export const PORTFOLIO_BALANCE_API_URL = `${MARITIME_API_URL}/api/portfolio-balance`;
+
 // ── Railway backend routes ────────────────────────────────────────────────────
 export const ASSETS_URL    = `${BACKEND_URL}/api/holdings`;
 export const BALANCE_URL   = `${BACKEND_URL}/api/account`;
@@ -9,8 +13,78 @@ export const ACTIVITY_URL  = `${BACKEND_URL}/api/activity`;
 
 // ── Still on Cloud Run ────────────────────────────────────────────────────────
 export const DEPOSIT_URL  = "https://maritime-deposit-service-266596137006.us-south1.run.app";
-export const TRADE_URL    = "https://market-maker-266596137006.us-west4.run.app";
 export const WITHDRAW_URL = "https://withdrawl-funds-266596137006.us-west4.run.app";
+
+// ── Overseer contract (Sepolia testnet) ──────────────────────────────────────
+// Executes trades: burns MDT on buy, mints MDT on sell. Tracks per-user nonces.
+export const OVERSEER_CONTRACT =
+  process.env.NEXT_PUBLIC_OVERSEER_CONTRACT as `0x${string}`;
+
+// ── TradeExecutor contract (Sepolia testnet) ──────────────────────────────────
+// User submits signed trade params here and pays gas.
+export const TRADE_EXECUTOR_ADDRESS =
+  (process.env.NEXT_PUBLIC_TRADE_EXECUTOR_ADDRESS ?? "0xfBB81aD3638708d1FA43Be0E4891EC434a85908C") as `0x${string}`;
+
+export const TRADE_EXECUTOR_ABI = [
+  {
+    name: "executeBuy",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "p", type: "tuple",
+        components: [
+          { name: "user",    type: "address" },
+          { name: "ticker",  type: "string"  },
+          { name: "shares",  type: "uint256" },
+          { name: "mdtCost", type: "uint256" },
+          { name: "nonce",   type: "uint256" },
+          { name: "expiry",  type: "uint256" },
+        ],
+      },
+      { name: "sig", type: "bytes" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "executeSell",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "p", type: "tuple",
+        components: [
+          { name: "user",      type: "address" },
+          { name: "ticker",    type: "string"  },
+          { name: "shares",    type: "uint256" },
+          { name: "mdtPayout", type: "uint256" },
+          { name: "nonce",     type: "uint256" },
+          { name: "expiry",    type: "uint256" },
+        ],
+      },
+      { name: "sig", type: "bytes" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "nonces",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "user", type: "address" }],
+    outputs: [{ type: "uint256" }],
+  },
+] as const;
+
+// ── EquityVault ERC-20 factory contract (Sepolia testnet) ─────────────────────
+// Deploys a ShareToken ERC-20 per ticker on first mint.
+// Canonical source of truth for all equity share balances.
+export const EQUITY_VAULT_ADDRESS =
+  (process.env.NEXT_PUBLIC_EQUITY_VAULT_ADDRESS ?? "0x28936C93D9cFbC22b9B4F438216A886f4844426a") as `0x${string}`;
+
+// MockMDT — the ERC-20 token the Overseer burns/mints for trading.
+// Separate from MARITIME_DEPOSIT_CONTRACT (which handles USDC/USDT deposits).
+export const MOCK_MDT_CONTRACT =
+  process.env.NEXT_PUBLIC_MOCK_MDT_CONTRACT as `0x${string}`;
 
 // ERC-20 stablecoin contract addresses (Ethereum mainnet).
 export const STABLECOIN_ADDRESSES: Record<string, string> = {
@@ -25,6 +99,14 @@ export const MARITIME_DEPOSIT_CONTRACT =
   process.env.NEXT_PUBLIC_MARITIME_DEPOSIT_CONTRACT as `0x${string}`;
 
 export const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? 11155111);
+
+const EXPLORER_ROOTS: Record<number, string> = {
+  1:        'https://etherscan.io',
+  11155111: 'https://sepolia.etherscan.io',
+  8453:     'https://basescan.org',
+  84532:    'https://sepolia.basescan.org',
+};
+export const EXPLORER_URL = EXPLORER_ROOTS[CHAIN_ID] ?? 'https://etherscan.io';
 
 export const SEPOLIA_STABLECOINS: Record<string, `0x${string}`> = {
   USDC: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
@@ -92,6 +174,134 @@ export const MARITIME_DEPOSIT_ABI = [
   },
 ] as const;
 
+// ── Overseer ERC-1155 ABI ─────────────────────────────────────────────────────
+export const OVERSEER_ABI = [
+  // ERC-1155 balanceOf — returns 6-decimal share balance for a given tokenId
+  {
+    name: "balanceOf",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "account", type: "address" },
+      { name: "id",      type: "uint256" },
+    ],
+    outputs: [{ type: "uint256" }],
+  },
+  // Buy: mints equity shares, burns MDT
+  {
+    name: "executeOffer",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "offer",
+        type: "tuple",
+        components: [
+          { name: "user",      type: "address" },
+          { name: "ticker",    type: "string"  },
+          { name: "shares",    type: "uint256" },
+          { name: "mdtCost",   type: "uint256" },
+          { name: "price",     type: "uint256" },
+          { name: "timestamp", type: "uint256" },
+          { name: "nonce",     type: "uint256" },
+          { name: "expiry",    type: "uint256" },
+        ],
+      },
+      { name: "signature", type: "bytes" },
+    ],
+    outputs: [],
+  },
+  // Sell: burns equity shares, mints MDT back to user
+  {
+    name: "executeRedeem",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "offer",
+        type: "tuple",
+        components: [
+          { name: "user",      type: "address" },
+          { name: "ticker",    type: "string"  },
+          { name: "shares",    type: "uint256" },
+          { name: "mdtPayout", type: "uint256" },
+          { name: "price",     type: "uint256" },
+          { name: "timestamp", type: "uint256" },
+          { name: "nonce",     type: "uint256" },
+          { name: "expiry",    type: "uint256" },
+        ],
+      },
+      { name: "signature", type: "bytes" },
+    ],
+    outputs: [],
+  },
+] as const;
+
+// ── EquityVault ABI ───────────────────────────────────────────────────────────
+export const EQUITY_VAULT_ABI = [
+  {
+    name: "balanceOfTicker",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "account", type: "address" },
+      { name: "ticker",  type: "string"  },
+    ],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    // Returns the ERC-20 ShareToken address for a ticker (address(0) if never minted)
+    name: "tokenForTicker",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "ticker", type: "string" }],
+    outputs: [{ type: "address" }],
+  },
+  {
+    // Returns the ticker string at index i in the allTickers array
+    name: "allTickers",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "index", type: "uint256" }],
+    outputs: [{ type: "string" }],
+  },
+  {
+    // Total number of distinct tickers ever minted
+    name: "tickerCount",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    name: "frozen",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ type: "bool" }],
+  },
+  {
+    name: "SharesMinted",
+    type: "event",
+    inputs: [
+      { name: "to",     type: "address", indexed: true  },
+      { name: "ticker", type: "string",  indexed: false },
+      { name: "amount", type: "uint256", indexed: false },
+      { name: "token",  type: "address", indexed: false },
+    ],
+  },
+  {
+    name: "SharesBurned",
+    type: "event",
+    inputs: [
+      { name: "from",   type: "address", indexed: true  },
+      { name: "ticker", type: "string",  indexed: false },
+      { name: "amount", type: "uint256", indexed: false },
+      { name: "token",  type: "address", indexed: false },
+    ],
+  },
+] as const;
+
 // ── EIP-712 DepositIntent (shared by all deposit UI + backend verification) ───
 export const DEPOSIT_INTENT_DOMAIN = {
   name:              "Cairo",
@@ -109,10 +319,20 @@ export const DEPOSIT_INTENT_TYPES = {
 
 // Friendly messages for contract revert names
 export const CONTRACT_ERROR_MESSAGES: Record<string, string> = {
+  // Deposit / withdrawal errors
   UnsupportedToken:         "Only USDC and USDT are supported.",
   BelowMinimum:             "Amount is below the minimum deposit.",
   InsufficientVaultBalance: "Vault balance too low. Try again later.",
-  InsufficientBalance:      "Insufficient MDT balance.",
   InsufficientAllowance:    "Approve the contract to spend your tokens first.",
   TransferFailed:           "Token transfer failed.",
+  // Trade errors (Overseer)
+  CallerNotOfferUser:       "Connected wallet does not match the requested address.",
+  InvalidBackendSignature:  "Offer is invalid — request a new one.",
+  PriceReportStale:         "Offer expired before submission — request a new one.",
+  PriceOutOfTolerance:      "Offer is inconsistent — request a new one.",
+  InvalidNonce:             "Another trade landed first — request a new one.",
+  OfferExpired:             "Offer timed out — request a new one.",
+  // Shared errors
+  InsufficientBalance:      "Not enough MDT — deposit more stablecoins first.",
+  AccountFrozen:            "This account is restricted.",
 };

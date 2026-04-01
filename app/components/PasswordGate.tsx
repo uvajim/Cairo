@@ -33,7 +33,7 @@ export function PasswordGate({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className="min-h-screen bg-black flex items-center justify-center px-4">
+    <div className="min-h-screen app-bg app-fg flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="flex items-center justify-center gap-2 mb-10">
@@ -42,7 +42,7 @@ export function PasswordGate({ children }: { children: React.ReactNode }) {
               <path d="M12 2L2 22H22L12 2ZM12 6L18 18H6L12 6Z" />
             </svg>
           </div>
-          <span className="text-white text-xl font-bold tracking-tight">Maritime</span>
+          <span className="app-fg text-xl font-bold tracking-tight">Maritime</span>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-3">
@@ -52,8 +52,8 @@ export function PasswordGate({ children }: { children: React.ReactNode }) {
             onChange={e => { setInput(e.target.value); setError(false); }}
             placeholder="Enter password"
             autoFocus
-            className={`w-full bg-[#1E1E24] border rounded-xl px-4 py-3 text-white text-sm placeholder-gray-500 outline-none transition-colors ${
-              error ? "border-[#ff5000]" : "border-gray-700 focus:border-white/30"
+            className={`w-full surface-2 border rounded-xl px-4 py-3 app-fg text-sm placeholder:text-muted outline-none transition-colors ${
+              error ? "border-[#ff5000]" : "border-default focus:border-[#00c805]/50"
             }`}
           />
           {error && (
