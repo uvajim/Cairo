@@ -239,26 +239,43 @@ function StockDetailContent({ symbol }: { symbol: string }) {
       }
 
       const { params, signature } = await response.json();
+      let hash: `0x${string}`;
 
-      // Convert string params back to bigints for the contract call
-      const p = {
-        user:   params.user   as `0x${string}`,
-        ticker: params.ticker as string,
-        shares: BigInt(params.shares),
-        nonce:  BigInt(params.nonce),
-        expiry: BigInt(params.expiry),
-        ...(orderType === 'buy'
-          ? { mdtCost:   BigInt(params.mdtCost) }
-          : { mdtPayout: BigInt(params.mdtPayout) }),
-      };
+      if (orderType === 'buy') {
+        const p = {
+          user:   params.user as `0x${string}`,
+          ticker: params.ticker as string,
+          shares: BigInt(params.shares),
+          nonce:  BigInt(params.nonce),
+          expiry: BigInt(params.expiry),
+          mdtCost: BigInt(params.mdtCost),
+        };
 
-      const hash = await writeContractAsync({
-        address:      TRADE_EXECUTOR_ADDRESS,
-        abi:          TRADE_EXECUTOR_ABI,
-        functionName: orderType === 'buy' ? 'executeBuy' : 'executeSell',
-        args:         [p, signature as `0x${string}`],
-        chainId:      CHAIN_ID,
-      });
+        hash = await writeContractAsync({
+          address:      TRADE_EXECUTOR_ADDRESS,
+          abi:          TRADE_EXECUTOR_ABI,
+          functionName: 'executeBuy',
+          args:         [p, signature as `0x${string}`],
+          chainId:      CHAIN_ID,
+        });
+      } else {
+        const p = {
+          user:   params.user as `0x${string}`,
+          ticker: params.ticker as string,
+          shares: BigInt(params.shares),
+          nonce:  BigInt(params.nonce),
+          expiry: BigInt(params.expiry),
+          mdtPayout: BigInt(params.mdtPayout),
+        };
+
+        hash = await writeContractAsync({
+          address:      TRADE_EXECUTOR_ADDRESS,
+          abi:          TRADE_EXECUTOR_ABI,
+          functionName: 'executeSell',
+          args:         [p, signature as `0x${string}`],
+          chainId:      CHAIN_ID,
+        });
+      }
 
       setOrderId(hash);
       setConfirmedShares(Number(BigInt(params.shares)) / 1_000_000);
