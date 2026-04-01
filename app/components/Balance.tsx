@@ -17,6 +17,8 @@ import {
   ERC20_APPROVE_ABI, MARITIME_DEPOSIT_ABI, MARITIME_WITHDRAW_ABI,
   CONTRACT_ERROR_MESSAGES,
   DEPOSIT_INTENT_DOMAIN, DEPOSIT_INTENT_TYPES,
+  EQUITY_VAULT_ADDRESS, EQUITY_VAULT_ABI,
+  CHAIN_ID, EXPLORER_URL,
 } from "../lib/config";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -51,7 +53,7 @@ interface AchTransfer {
 
 interface FeedItem {
   id: string;
-  kind: "order" | "ach" | "mdt";
+  kind: "order" | "ach" | "mdt" | "equity";
   // order fields
   ticker?: string;
   side?: "buy" | "sell";
@@ -63,8 +65,11 @@ interface FeedItem {
   achStatus?: string;
   // mdt fields
   mdtDirection?: "in" | "out";
-  txHash?: string;
+  // equity fields
+  equitySide?: "buy" | "sell";
+  shares?: number;
   // common
+  txHash?: string;
   amount: number;
   createdAt: string;
 }
@@ -471,7 +476,7 @@ export function Balance() {
 
   useEffect(() => {
     if (!address) { setFeedItems([]); return; }
-    if (feedCache.address === address && feedCache.items.length > 0) {
+    if (feedCache.address === address && feedCache.items.some(i => i.kind === "equity" || feedCache.items.length > 0)) {
       setFeedItems(feedCache.items); return;
     }
     setLoading(true); setError(null);
@@ -498,8 +503,19 @@ export function Balance() {
           args: { user: address as `0x${string}` }, fromBlock: "earliest" }).catch(() => [])
       : Promise.resolve([]);
 
-    Promise.all([fetchOrders, fetchAch, fetchMdtDeposits, fetchMdtWithdraws])
-      .then(([orders, achTransfers, depositedLogs, withdrawnLogs]) => {
+    const addr = address as `0x${string}`;
+    const fetchMintLogs = client
+      ? client.getContractEvents({ address: EQUITY_VAULT_ADDRESS, abi: EQUITY_VAULT_ABI,
+          eventName: 'SharesMinted', args: { to: addr }, fromBlock: "earliest" }).catch(() => [])
+      : Promise.resolve([]);
+
+    const fetchBurnLogs = client
+      ? client.getContractEvents({ address: EQUITY_VAULT_ADDRESS, abi: EQUITY_VAULT_ABI,
+          eventName: 'SharesBurned', args: { from: addr }, fromBlock: "earliest" }).catch(() => [])
+      : Promise.resolve([]);
+
+    Promise.all([fetchOrders, fetchAch, fetchMdtDeposits, fetchMdtWithdraws, fetchMintLogs, fetchBurnLogs])
+      .then(async ([orders, achTransfers, depositedLogs, withdrawnLogs, mintLogs, burnLogs]) => {
         const items: FeedItem[] = [];
 
         for (const o of orders) {
@@ -551,6 +567,44 @@ export function Balance() {
           });
         }
 
+        // Fetch block timestamps for equity events
+        const allEquityLogs = [...mintLogs, ...burnLogs];
+        const uniqueBlocks  = [...new Set(allEquityLogs.map(l => l.blockNumber!))];
+        const blockTimes    = new Map<bigint, number>();
+        await Promise.all(uniqueBlocks.map(async (bn) => {
+          if (!client) return;
+          const block = await client.getBlock({ blockNumber: bn }).catch(() => null);
+          if (block) blockTimes.set(bn, Number(block.timestamp) * 1000);
+        }));
+
+        for (const log of mintLogs) {
+          const ts = blockTimes.get(log.blockNumber!) ?? Date.now();
+          items.push({
+            id:          `equity-buy-${log.transactionHash}`,
+            kind:        "equity",
+            equitySide:  "buy",
+            ticker:      log.args.ticker,
+            shares:      Number(log.args.amount) / 1_000_000,
+            amount:      0,
+            txHash:      log.transactionHash ?? undefined,
+            createdAt:   new Date(ts).toISOString(),
+          });
+        }
+
+        for (const log of burnLogs) {
+          const ts = blockTimes.get(log.blockNumber!) ?? Date.now();
+          items.push({
+            id:          `equity-sell-${log.transactionHash}`,
+            kind:        "equity",
+            equitySide:  "sell",
+            ticker:      log.args.ticker,
+            shares:      Number(log.args.amount) / 1_000_000,
+            amount:      0,
+            txHash:      log.transactionHash ?? undefined,
+            createdAt:   new Date(ts).toISOString(),
+          });
+        }
+
         items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
         feedCache.address = address;
         feedCache.items = items;
@@ -558,8 +612,7 @@ export function Balance() {
       })
       .catch(() => setError("loadError"))
       .finally(() => setLoading(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [address]);
+  }, [address, sepoliaClient]);
 
   // ── ACH section (shared JSX used in both panels) ──────────────────────────
   const renderAchSection = (panelType: "deposit" | "withdraw") => {
@@ -1147,6 +1200,43 @@ export function Balance() {
                       <div className="text-right shrink-0">
                         <p className={`font-bold text-sm ${isIn ? "text-[#00c805]" : "text-[#ff5000]"}`}>
                           {isIn ? "+" : "−"}{item.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MDT
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">{relativeTime(item.createdAt)}</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
+              // ── On-chain equity trades ───────────────────────────────────────
+              if (item.kind === "equity") {
+                const isBuy = item.equitySide === "buy";
+                return (
+                  <div key={item.id} className="p-5 hover:bg-gray-800/40 transition-colors">
+                    <div className="flex items-center gap-4">
+                      <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${isBuy ? "bg-[#00c805]/10 text-[#00c805]" : "bg-[#ff5000]/10 text-[#ff5000]"}`}>
+                        {isBuy ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownLeft className="w-4 h-4" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          {item.ticker
+                            ? <Link to={`/stock/${item.ticker}`} className="font-bold text-sm hover:text-[#00c805] transition-colors">{item.ticker}</Link>
+                            : <span className="font-bold text-sm">Trade</span>
+                          }
+                          <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${isBuy ? "bg-[#00c805]/15 text-[#00c805]" : "bg-[#ff5000]/15 text-[#ff5000]"}`}>
+                            {isBuy ? "BUY" : "SELL"}
+                          </span>
+                        </div>
+                        {item.txHash && (
+                          <a href={`${EXPLORER_URL}/tx/${item.txHash}`} target="_blank" rel="noopener noreferrer"
+                            className="text-xs font-mono text-gray-500 hover:app-fg transition-colors">
+                            {item.txHash.slice(0, 8)}…{item.txHash.slice(-6)}
+                          </a>
+                        )}
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="font-bold text-sm">
+                          {item.shares} share{item.shares !== 1 ? "s" : ""}
                         </p>
                         <p className="text-xs text-gray-500 mt-0.5">{relativeTime(item.createdAt)}</p>
                       </div>
