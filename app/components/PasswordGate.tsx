@@ -36,12 +36,8 @@ export function PasswordGate({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen app-bg app-fg flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         {/* Logo */}
-        <div className="flex items-center justify-center gap-2 mb-10">
-          <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center text-black">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 2L2 22H22L12 2ZM12 6L18 18H6L12 6Z" />
-            </svg>
-          </div>
+        <div className="flex flex-col items-center justify-center gap-3 mb-10">
+          <img src="/maritime.png" alt="Maritime" className="logo-maritime w-16 h-16 object-contain" />
           <span className="app-fg text-xl font-bold tracking-tight">Maritime</span>
         </div>
 
@@ -61,7 +57,7 @@ export function PasswordGate({ children }: { children: React.ReactNode }) {
           )}
           <button
             type="submit"
-            className="w-full bg-white text-black text-sm font-bold py-3 rounded-xl hover:bg-gray-200 transition-colors"
+            className="w-full bg-[#111827] text-white text-sm font-bold py-3 rounded-xl hover:bg-[#1f2937] transition-colors"
           >
             Continue
           </button>
