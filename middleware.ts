@@ -6,7 +6,6 @@ const GEO_BLOCK_HTML = `<!DOCTYPE html>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Not Available — Maritime</title>
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -120,6 +119,12 @@ const GEO_BLOCK_HTML = `<!DOCTYPE html>
 </body>
 </html>`;
 
+const FAVICON_LINK = '</favicon.svg>; rel="icon"; type="image/svg+xml"';
+function withFavicon(res: NextResponse) {
+  res.headers.set("Link", FAVICON_LINK);
+  return res;
+}
+
 const GEO_BYPASS_PASSWORD = process.env.GEO_BYPASS_PASSWORD ?? "";
 const GEO_BYPASS_COOKIE = "geo_bypass";
 
@@ -139,7 +144,7 @@ export function middleware(request: NextRequest) {
         path: "/",
         // Session cookie — expires when browser closes
       });
-      return response;
+      return withFavicon(response);
     }
     // Wrong password — fall through to normal geo check
   }
@@ -147,7 +152,7 @@ export function middleware(request: NextRequest) {
   // If valid bypass cookie is present, skip geo check
   const bypassCookie = request.cookies.get(GEO_BYPASS_COOKIE)?.value;
   if (GEO_BYPASS_PASSWORD && bypassCookie === GEO_BYPASS_PASSWORD) {
-    return NextResponse.next();
+    return withFavicon(NextResponse.next());
   }
 
   const country =
@@ -156,13 +161,13 @@ export function middleware(request: NextRequest) {
     request.headers.get("cf-ipcountry");
 
   if (country === "US") {
-    return new NextResponse(GEO_BLOCK_HTML, {
+    return withFavicon(new NextResponse(GEO_BLOCK_HTML, {
       status: 451,
       headers: { "Content-Type": "text/html; charset=utf-8" },
-    });
+    }));
   }
 
-  return NextResponse.next();
+  return withFavicon(NextResponse.next());
 }
 
 export const config = {
