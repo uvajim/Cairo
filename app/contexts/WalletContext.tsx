@@ -15,7 +15,7 @@ import {
 } from "wagmi";
 import { formatUnits } from "viem";
 import { useAppKit } from "@reown/appkit/react";
-import { MOCK_MDT_CONTRACT, CHAIN_ID } from "../lib/config";
+import { MDT_TOKEN_CONTRACT, CHAIN_ID } from "../lib/config";
 
 // Minimal ABI — only balanceOf needed
 const MDT_ABI = [
@@ -56,7 +56,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   // MDT balance read directly from the contract (6 decimals) — always on Sepolia
   const { data: mdtRaw, refetch: refetchMdt } = useReadContract({
-    address:  MOCK_MDT_CONTRACT,
+    address:  MDT_TOKEN_CONTRACT,
     abi:      MDT_ABI,
     chainId:  CHAIN_ID,
     functionName: "balanceOf",

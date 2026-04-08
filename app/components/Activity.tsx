@@ -9,7 +9,7 @@ import { Link } from 'react-router';
 import {
   EQUITY_VAULT_ADDRESS,
   EQUITY_VAULT_ABI,
-  MOCK_MDT_CONTRACT,
+  MDT_TOKEN_CONTRACT,
   CHAIN_ID,
   EXPLORER_URL,
 } from '../lib/config';
@@ -93,7 +93,7 @@ export function Activity() {
           }),
           // MDT minted to user → deposit
           publicClient.getContractEvents({
-            address:   MOCK_MDT_CONTRACT,
+            address:   MDT_TOKEN_CONTRACT,
             abi:       ERC20_TRANSFER_EVENT,
             eventName: 'Transfer',
             args:      { from: ZERO_ADDRESS, to: addr },
@@ -102,7 +102,7 @@ export function Activity() {
           }),
           // MDT burned from user → withdrawal
           publicClient.getContractEvents({
-            address:   MOCK_MDT_CONTRACT,
+            address:   MDT_TOKEN_CONTRACT,
             abi:       ERC20_TRANSFER_EVENT,
             eventName: 'Transfer',
             args:      { from: addr, to: ZERO_ADDRESS },
