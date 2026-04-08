@@ -159,7 +159,7 @@ async function processChunk(fromBlock, toBlock) {
   for (const log of depositedLogs) {
     try {
       const { user, token, amount, timestamp } = depositIface.parseLog(log).args;
-      insertActivity({
+      await insertActivity({
         id:           `deposit-${log.transactionHash}`,
         wallet:       user.toLowerCase(),
         kind:         'deposit',
@@ -178,7 +178,7 @@ async function processChunk(fromBlock, toBlock) {
   for (const log of withdrawnLogs) {
     try {
       const { user, token, amount, timestamp } = depositIface.parseLog(log).args;
-      insertActivity({
+      await insertActivity({
         id:           `withdrawal-${log.transactionHash}`,
         wallet:       user.toLowerCase(),
         kind:         'withdrawal',
@@ -198,7 +198,7 @@ async function processChunk(fromBlock, toBlock) {
     try {
       const { to, ticker, amount } = equityIface.parseLog(log).args;
       const mdtAmount = await decodeMdtAmount(log.transactionHash, 'buy');
-      insertActivity({
+      await insertActivity({
         id:           `buy-${log.transactionHash}`,
         wallet:       to.toLowerCase(),
         kind:         'buy',
@@ -218,7 +218,7 @@ async function processChunk(fromBlock, toBlock) {
     try {
       const { from, ticker, amount } = equityIface.parseLog(log).args;
       const mdtAmount = await decodeMdtAmount(log.transactionHash, 'sell');
-      insertActivity({
+      await insertActivity({
         id:           `sell-${log.transactionHash}`,
         wallet:       from.toLowerCase(),
         kind:         'sell',
@@ -252,7 +252,7 @@ async function poll() {
       ? Number(process.env.INDEXER_START_BLOCK)
       : defaultStart;
 
-    const lastIndexed = Number(getState('last_indexed_block', String(configStart - 1)));
+    const lastIndexed = Number(await getState('last_indexed_block', String(configStart - 1)));
     const nextBlock   = lastIndexed + 1;
 
     if (nextBlock > latestBlock) return;
@@ -260,7 +260,7 @@ async function poll() {
     for (let from = nextBlock; from <= latestBlock; from += CHUNK) {
       const to = Math.min(from + CHUNK - 1, latestBlock);
       await processChunk(from, to);
-      setState('last_indexed_block', to);
+      await setState('last_indexed_block', to);
     }
   } catch (err) {
     console.error('[indexer] poll error:', err.message);

@@ -21,7 +21,7 @@
 const express = require('express');
 const cors    = require('cors');
 const { ethers } = require('ethers');
-const { getActivityByWallet, upsertSnapshot, getLatestSnapshot, getSnapshotHistory } = require('./db');
+const { init, getActivityByWallet, upsertSnapshot, getLatestSnapshot, getSnapshotHistory } = require('./db');
 const indexer = require('./indexer');
 
 const app = express();
@@ -158,61 +158,86 @@ app.post('/api/trade', async (req, res) => {
 // works identically whether pointed at localhost or production.
 
 // GET /api/portfolio-balance/:address — latest stored value
-app.get('/api/portfolio-balance/:address', (req, res) => {
-  const row = getLatestSnapshot(req.params.address);
-  if (!row) return res.json({ balance: null });
-  return res.json({ balance: row.value });
+app.get('/api/portfolio-balance/:address', async (req, res) => {
+  try {
+    const row = await getLatestSnapshot(req.params.address);
+    if (!row) return res.json({ balance: null });
+    return res.json({ balance: row.value });
+  } catch (err) {
+    console.error('[portfolio-balance GET]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // PUT /api/portfolio-balance/:address — store a new snapshot
-app.put('/api/portfolio-balance/:address', (req, res) => {
-  const { balance } = req.body ?? {};
-  if (typeof balance !== 'number' || !Number.isFinite(balance)) {
-    return res.status(400).json({ error: 'balance must be a finite number' });
+app.put('/api/portfolio-balance/:address', async (req, res) => {
+  try {
+    const { balance } = req.body ?? {};
+    if (typeof balance !== 'number' || !Number.isFinite(balance)) {
+      return res.status(400).json({ error: 'balance must be a finite number' });
+    }
+    await upsertSnapshot(req.params.address, balance);
+    return res.json({ balance });
+  } catch (err) {
+    console.error('[portfolio-balance PUT]', err.message);
+    return res.status(500).json({ error: err.message });
   }
-  upsertSnapshot(req.params.address, balance);
-  return res.json({ balance });
 });
 
 // GET /api/portfolio-balance/:address/history?days=N — time-series points
-app.get('/api/portfolio-balance/:address/history', (req, res) => {
-  const days    = Math.max(1, Number(req.query.days) || 1);
-  const sinceSec = Math.floor(Date.now() / 1000) - days * 86400;
-  const rows    = getSnapshotHistory(req.params.address, sinceSec);
-  const points  = rows.map(r => ({
-    time:  new Date(r.recorded_at * 1000).toISOString(),
-    value: r.value,
-  }));
-  return res.json({ points });
+app.get('/api/portfolio-balance/:address/history', async (req, res) => {
+  try {
+    const days     = Math.max(1, Number(req.query.days) || 1);
+    const sinceSec = Math.floor(Date.now() / 1000) - days * 86400;
+    const rows     = await getSnapshotHistory(req.params.address, sinceSec);
+    const points   = rows.map(r => ({
+      time:  new Date(r.recorded_at * 1000).toISOString(),
+      value: r.value,
+    }));
+    return res.json({ points });
+  } catch (err) {
+    console.error('[portfolio-balance history]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // ── POST /api/activity ───────────────────────────────────────────────────────
 // Body: { walletAddress }
 // Returns: { activity: FeedItem[] }  (sorted newest-first)
-app.post('/api/activity', (req, res) => {
-  const { walletAddress } = req.body ?? {};
-  if (!walletAddress) {
-    return res.status(400).json({ error: 'walletAddress is required' });
+app.post('/api/activity', async (req, res) => {
+  try {
+    const { walletAddress } = req.body ?? {};
+    if (!walletAddress) {
+      return res.status(400).json({ error: 'walletAddress is required' });
+    }
+
+    const rows = await getActivityByWallet(walletAddress);
+
+    const activity = rows.map(r => ({
+      id:        r.id,
+      kind:      r.kind,
+      ticker:    r.ticker   ?? undefined,
+      token:     r.token    ?? undefined,
+      amount:    r.amount,
+      shares:    r.shares   ?? undefined,
+      txHash:    r.tx_hash,
+      createdAt: new Date(r.block_time * 1000).toISOString(),
+    }));
+
+    return res.json({ activity });
+  } catch (err) {
+    console.error('[activity]', err.message);
+    return res.status(500).json({ error: err.message });
   }
-
-  const rows = getActivityByWallet(walletAddress);
-
-  const activity = rows.map(r => ({
-    id:        r.id,
-    kind:      r.kind,
-    ticker:    r.ticker   ?? undefined,
-    token:     r.token    ?? undefined,
-    amount:    r.amount,
-    shares:    r.shares   ?? undefined,
-    txHash:    r.tx_hash,
-    createdAt: new Date(r.block_time * 1000).toISOString(),
-  }));
-
-  return res.json({ activity });
 });
 
-app.listen(PORT, () => {
-  console.log(`Trade server listening on port ${PORT} (chain ${CHAIN_ID})`);
-  console.log(`Signer address: ${signer.address}`);
-  indexer.start();
+init().then(() => {
+  app.listen(PORT, () => {
+    console.log(`Trade server listening on port ${PORT} (chain ${CHAIN_ID})`);
+    console.log(`Signer address: ${signer.address}`);
+    indexer.start();
+  });
+}).catch(err => {
+  console.error('[startup] DB init failed:', err.message);
+  process.exit(1);
 });

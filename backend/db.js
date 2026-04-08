@@ -1,116 +1,124 @@
 /**
- * SQLite database — activity index + portfolio history.
+ * PostgreSQL database — activity index + portfolio history.
  *
- * Tables:
- *   activity            — one row per on-chain event (deposit / withdrawal / buy / sell)
- *   indexer_state       — key/value store for indexer progress (last_indexed_block)
- *   portfolio_snapshots — time-series portfolio value per wallet
+ * Requires DATABASE_URL env var (Railway injects this automatically when
+ * the Postgres plugin is added to the project).
  */
 
-const Database = require('better-sqlite3');
-const path     = require('path');
+const { Pool } = require('pg');
 
-const db = new Database(path.join(__dirname, 'activity.db'));
-db.pragma('journal_mode = WAL');   // safe for concurrent reads + single writer
-db.pragma('foreign_keys = ON');
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
+});
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS activity (
-    id           TEXT    PRIMARY KEY,
-    wallet       TEXT    NOT NULL,
-    kind         TEXT    NOT NULL,   -- deposit | withdrawal | buy | sell
-    ticker       TEXT,               -- stock ticker (trades only)
-    token        TEXT,               -- USDC | USDT (deposits/withdrawals only)
-    amount       REAL    NOT NULL DEFAULT 0,   -- USD value (6-dec normalised)
-    shares       REAL,               -- share qty (trades only, 6-dec normalised)
-    tx_hash      TEXT    NOT NULL,
-    block_number INTEGER NOT NULL,
-    block_time   INTEGER NOT NULL    -- unix seconds
-  );
-  CREATE INDEX IF NOT EXISTS idx_activity_wallet ON activity(wallet COLLATE NOCASE);
-  CREATE INDEX IF NOT EXISTS idx_activity_block  ON activity(block_number);
+async function init() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS activity (
+      id           TEXT   PRIMARY KEY,
+      wallet       TEXT   NOT NULL,
+      kind         TEXT   NOT NULL,
+      ticker       TEXT,
+      token        TEXT,
+      amount       REAL   NOT NULL DEFAULT 0,
+      shares       REAL,
+      tx_hash      TEXT   NOT NULL,
+      block_number BIGINT NOT NULL,
+      block_time   BIGINT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_activity_wallet ON activity(LOWER(wallet));
+    CREATE INDEX IF NOT EXISTS idx_activity_block  ON activity(block_number);
 
-  CREATE TABLE IF NOT EXISTS indexer_state (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-  );
+    CREATE TABLE IF NOT EXISTS indexer_state (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
 
-  CREATE TABLE IF NOT EXISTS portfolio_snapshots (
-    wallet      TEXT    NOT NULL,
-    value       REAL    NOT NULL,
-    recorded_at INTEGER NOT NULL,   -- unix seconds
-    PRIMARY KEY (wallet, recorded_at)
-  );
-  CREATE INDEX IF NOT EXISTS idx_portfolio_wallet ON portfolio_snapshots(wallet COLLATE NOCASE, recorded_at);
-`);
-
-const stmtInsert = db.prepare(`
-  INSERT OR IGNORE INTO activity
-    (id, wallet, kind, ticker, token, amount, shares, tx_hash, block_number, block_time)
-  VALUES
-    (@id, @wallet, @kind, @ticker, @token, @amount, @shares, @tx_hash, @block_number, @block_time)
-`);
-
-const stmtByWallet = db.prepare(`
-  SELECT * FROM activity
-  WHERE wallet = ? COLLATE NOCASE
-  ORDER BY block_number DESC, rowid DESC
-`);
-
-const stmtGetState = db.prepare(`SELECT value FROM indexer_state WHERE key = ?`);
-const stmtSetState = db.prepare(`INSERT OR REPLACE INTO indexer_state (key, value) VALUES (?, ?)`);
-
-function insertActivity(row) {
-  stmtInsert.run(row);
+    CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+      wallet      TEXT   NOT NULL,
+      value       REAL   NOT NULL,
+      recorded_at BIGINT NOT NULL,
+      PRIMARY KEY (wallet, recorded_at)
+    );
+    CREATE INDEX IF NOT EXISTS idx_portfolio_wallet
+      ON portfolio_snapshots(LOWER(wallet), recorded_at);
+  `);
+  console.log('[db] Schema ready');
 }
 
-function getActivityByWallet(wallet) {
-  return stmtByWallet.all(wallet);
+// ── Activity ──────────────────────────────────────────────────────────────────
+
+async function insertActivity(row) {
+  await pool.query(
+    `INSERT INTO activity
+       (id, wallet, kind, ticker, token, amount, shares, tx_hash, block_number, block_time)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     ON CONFLICT (id) DO NOTHING`,
+    [row.id, row.wallet, row.kind, row.ticker ?? null, row.token ?? null,
+     row.amount, row.shares ?? null, row.tx_hash, row.block_number, row.block_time],
+  );
 }
 
-function getState(key, defaultValue = null) {
-  const row = stmtGetState.get(key);
-  return row ? row.value : defaultValue;
+async function getActivityByWallet(wallet) {
+  const { rows } = await pool.query(
+    `SELECT * FROM activity
+     WHERE LOWER(wallet) = LOWER($1)
+     ORDER BY block_number DESC, id DESC`,
+    [wallet],
+  );
+  return rows;
 }
 
-function setState(key, value) {
-  stmtSetState.run(key, String(value));
+// ── Indexer state ─────────────────────────────────────────────────────────────
+
+async function getState(key, defaultValue = null) {
+  const { rows } = await pool.query(
+    `SELECT value FROM indexer_state WHERE key = $1`, [key],
+  );
+  return rows.length ? rows[0].value : defaultValue;
+}
+
+async function setState(key, value) {
+  await pool.query(
+    `INSERT INTO indexer_state (key, value) VALUES ($1, $2)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+    [key, String(value)],
+  );
 }
 
 // ── Portfolio snapshots ───────────────────────────────────────────────────────
 
-const stmtUpsertSnapshot = db.prepare(`
-  INSERT OR REPLACE INTO portfolio_snapshots (wallet, value, recorded_at)
-  VALUES (?, ?, ?)
-`);
-
-const stmtLatestSnapshot = db.prepare(`
-  SELECT value, recorded_at FROM portfolio_snapshots
-  WHERE wallet = ? COLLATE NOCASE
-  ORDER BY recorded_at DESC
-  LIMIT 1
-`);
-
-const stmtSnapshotHistory = db.prepare(`
-  SELECT value, recorded_at FROM portfolio_snapshots
-  WHERE wallet = ? COLLATE NOCASE
-    AND recorded_at >= ?
-  ORDER BY recorded_at ASC
-`);
-
-function upsertSnapshot(wallet, value) {
-  stmtUpsertSnapshot.run(wallet.toLowerCase(), value, Math.floor(Date.now() / 1000));
+async function upsertSnapshot(wallet, value) {
+  await pool.query(
+    `INSERT INTO portfolio_snapshots (wallet, value, recorded_at)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (wallet, recorded_at) DO UPDATE SET value = EXCLUDED.value`,
+    [wallet.toLowerCase(), value, Math.floor(Date.now() / 1000)],
+  );
 }
 
-function getLatestSnapshot(wallet) {
-  return stmtLatestSnapshot.get(wallet.toLowerCase()) ?? null;
+async function getLatestSnapshot(wallet) {
+  const { rows } = await pool.query(
+    `SELECT value, recorded_at FROM portfolio_snapshots
+     WHERE LOWER(wallet) = LOWER($1)
+     ORDER BY recorded_at DESC LIMIT 1`,
+    [wallet],
+  );
+  return rows.length ? rows[0] : null;
 }
 
-function getSnapshotHistory(wallet, sinceSecs) {
-  return stmtSnapshotHistory.all(wallet.toLowerCase(), sinceSecs);
+async function getSnapshotHistory(wallet, sinceSecs) {
+  const { rows } = await pool.query(
+    `SELECT value, recorded_at FROM portfolio_snapshots
+     WHERE LOWER(wallet) = LOWER($1) AND recorded_at >= $2
+     ORDER BY recorded_at ASC`,
+    [wallet, sinceSecs],
+  );
+  return rows;
 }
 
 module.exports = {
+  init,
   insertActivity, getActivityByWallet,
   getState, setState,
   upsertSnapshot, getLatestSnapshot, getSnapshotHistory,
