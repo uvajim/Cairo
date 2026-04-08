@@ -15,10 +15,7 @@ export const ACTIVITY_URL  = `${BACKEND_URL}/api/activity`;
 export const DEPOSIT_URL  = "https://maritime-deposit-service-266596137006.us-south1.run.app";
 export const WITHDRAW_URL = "https://withdrawl-funds-266596137006.us-west4.run.app";
 
-// ── Overseer contract (Sepolia testnet) ──────────────────────────────────────
-// Executes trades: burns MDT on buy, mints MDT on sell. Tracks per-user nonces.
-export const OVERSEER_CONTRACT =
-  process.env.NEXT_PUBLIC_OVERSEER_CONTRACT as `0x${string}`;
+// ── Trade execution is handled by TradeExecutor (see TRADE_EXECUTOR_ADDRESS below)
 
 // ── TradeExecutor contract (Sepolia testnet) ──────────────────────────────────
 // User submits signed trade params here and pays gas.
@@ -81,10 +78,9 @@ export const TRADE_EXECUTOR_ABI = [
 export const EQUITY_VAULT_ADDRESS =
   (process.env.NEXT_PUBLIC_EQUITY_VAULT_ADDRESS ?? "0x28936C93D9cFbC22b9B4F438216A886f4844426a") as `0x${string}`;
 
-// MockMDT — the ERC-20 token the Overseer burns/mints for trading.
-// Separate from MARITIME_DEPOSIT_CONTRACT (which handles USDC/USDT deposits).
-export const MOCK_MDT_CONTRACT =
-  process.env.NEXT_PUBLIC_MOCK_MDT_CONTRACT as `0x${string}`;
+// MDT token contract — separate from the DepositGateway (MaritimeDeposit).
+export const MDT_TOKEN_CONTRACT =
+  (process.env.NEXT_PUBLIC_MDT_TOKEN_CONTRACT ?? process.env.NEXT_PUBLIC_MOCK_MDT_CONTRACT) as `0x${string}`;
 
 // ERC-20 stablecoin contract addresses (Ethereum mainnet).
 export const STABLECOIN_ADDRESSES: Record<string, string> = {
@@ -174,68 +170,6 @@ export const MARITIME_DEPOSIT_ABI = [
   },
 ] as const;
 
-// ── Overseer ERC-1155 ABI ─────────────────────────────────────────────────────
-export const OVERSEER_ABI = [
-  // ERC-1155 balanceOf — returns 6-decimal share balance for a given tokenId
-  {
-    name: "balanceOf",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "account", type: "address" },
-      { name: "id",      type: "uint256" },
-    ],
-    outputs: [{ type: "uint256" }],
-  },
-  // Buy: mints equity shares, burns MDT
-  {
-    name: "executeBuyOffer",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      {
-        name: "offer",
-        type: "tuple",
-        components: [
-          { name: "user",      type: "address" },
-          { name: "ticker",    type: "string"  },
-          { name: "shares",    type: "uint256" },
-          { name: "mdtCost",   type: "uint256" },
-          { name: "price",     type: "uint256" },
-          { name: "timestamp", type: "uint256" },
-          { name: "nonce",     type: "uint256" },
-          { name: "expiry",    type: "uint256" },
-        ],
-      },
-      { name: "signature", type: "bytes" },
-    ],
-    outputs: [],
-  },
-  // Sell: burns equity shares, mints MDT back to user
-  {
-    name: "executeSellOffer",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      {
-        name: "offer",
-        type: "tuple",
-        components: [
-          { name: "user",      type: "address" },
-          { name: "ticker",    type: "string"  },
-          { name: "shares",    type: "uint256" },
-          { name: "mdtPayout", type: "uint256" },
-          { name: "price",     type: "uint256" },
-          { name: "timestamp", type: "uint256" },
-          { name: "nonce",     type: "uint256" },
-          { name: "expiry",    type: "uint256" },
-        ],
-      },
-      { name: "signature", type: "bytes" },
-    ],
-    outputs: [],
-  },
-] as const;
 
 // ── EquityVault ABI ───────────────────────────────────────────────────────────
 export const EQUITY_VAULT_ABI = [
@@ -325,8 +259,8 @@ export const CONTRACT_ERROR_MESSAGES: Record<string, string> = {
   InsufficientVaultBalance: "Vault balance too low. Try again later.",
   InsufficientAllowance:    "Approve the contract to spend your tokens first.",
   TransferFailed:           "Token transfer failed.",
-  // Trade errors (Overseer)
-  CallerNotOfferUser:       "Connected wallet does not match the requested address.",
+  // Trade errors (TradeExecutor)
+  CallerNotUser:            "Connected wallet does not match the requested address.",
   InvalidBackendSignature:  "Offer is invalid — request a new one.",
   PriceReportStale:         "Offer expired before submission — request a new one.",
   PriceOutOfTolerance:      "Offer is inconsistent — request a new one.",
