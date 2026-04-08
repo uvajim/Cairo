@@ -131,42 +131,19 @@ const GEO_BYPASS_COOKIE = "geo_bypass";
 export function middleware(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl;
 
-  // If a bypass password is provided in the query string, validate and set cookie
+  // If a valid geo_unlock param is present, pass through immediately so the
+  // page loads and client-side JS can set the bypass cookie.
+  // We do NOT redirect here — email pre-fetchers would consume a server-side
+  // redirect and the real user's click would arrive at a param-less URL.
   const unlockParam = searchParams.get("geo_unlock");
-  if (GEO_BYPASS_PASSWORD && unlockParam !== null) {
-    if (unlockParam === GEO_BYPASS_PASSWORD) {
-      const url = request.nextUrl.clone();
-      url.searchParams.delete("geo_unlock");
-      // Always land on the www domain so the cookie and URL are canonical
-      if (!url.hostname.startsWith("www.") && url.hostname.includes(".")) {
-        url.hostname = "www." + url.hostname;
-      }
-      const response = NextResponse.redirect(url);
-      // Use the root domain so the cookie is valid on both www and apex
-      const rootDomain = url.hostname.includes(".")
-        ? "." + url.hostname.split(".").slice(-2).join(".")
-        : undefined;
-      response.cookies.set(GEO_BYPASS_COOKIE, GEO_BYPASS_PASSWORD, {
-        httpOnly: true,
-        sameSite: "strict",
-        path: "/",
-        ...(rootDomain ? { domain: rootDomain } : {}),
-        // Session cookie — expires when browser closes
-      });
-      return withFavicon(response);
-    }
-    // Wrong password — fall through to normal geo check
+  if (GEO_BYPASS_PASSWORD && unlockParam === GEO_BYPASS_PASSWORD) {
+    return withFavicon(NextResponse.next());
   }
 
-  // If valid bypass cookie is present, skip geo check.
-  // Also redirect apex → www so all bypassed traffic lands on the canonical domain.
+  // If valid bypass cookie is present, skip geo check
   const bypassCookie = request.cookies.get(GEO_BYPASS_COOKIE)?.value;
-  if (GEO_BYPASS_PASSWORD && bypassCookie === GEO_BYPASS_PASSWORD) {
-    if (!request.nextUrl.hostname.startsWith("www.") && request.nextUrl.hostname.includes(".")) {
-      const url = request.nextUrl.clone();
-      url.hostname = "www." + url.hostname;
-      return withFavicon(NextResponse.redirect(url, 308));
-    }
+  if (GEO_BYPASS_PASSWORD && bypassCookie &&
+      decodeURIComponent(bypassCookie) === GEO_BYPASS_PASSWORD) {
     return withFavicon(NextResponse.next());
   }
 
