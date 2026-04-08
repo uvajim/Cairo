@@ -154,6 +154,7 @@ export function Portfolio() {
   const holdingsValue  = Object.entries(holdings).reduce((sum, [ticker, qty]) => sum + qty * (holdingPrices[ticker] ?? 0), 0);
   const portfolioValue = address ? accountBalance + holdingsValue : 0;
 
+  // Fetch current cached balance from Redis (via backend)
   useEffect(() => {
     if (!address) {
       setStoredPortfolioBalance(null);
@@ -169,14 +170,24 @@ export function Portfolio() {
         if (cancelled) return;
         const value = typeof data?.balance === "number" ? data.balance : null;
         setStoredPortfolioBalance(value);
-        setAccountCreatedAt(typeof data?.createdAt === "string" ? data.createdAt : null);
         lastSyncedBalanceRef.current = value;
       })
       .catch(() => { /* keep local value */ });
 
+    // Fetch earliest snapshot time to determine account age (for timeframe gating)
+    fetch(`${PORTFOLIO_BALANCE_API_URL}/${address}/history?days=365`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        const firstPoint = data?.points?.[0];
+        if (firstPoint?.time) setAccountCreatedAt(firstPoint.time);
+      })
+      .catch(() => {});
+
     return () => { cancelled = true; };
   }, [address]);
 
+  // Push locally-computed portfolio value to TSDB (price-change-driven snapshots)
   useEffect(() => {
     if (!address) return;
     if (!Number.isFinite(portfolioValue)) return;
@@ -197,7 +208,6 @@ export function Portfolio() {
           const value = typeof data?.balance === "number" ? data.balance : roundedBalance;
           lastSyncedBalanceRef.current = value;
           setStoredPortfolioBalance(value);
-          if (typeof data?.createdAt === "string") setAccountCreatedAt(data.createdAt);
         })
         .catch(() => { /* best-effort sync */ });
     }, 600);

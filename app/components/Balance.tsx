@@ -87,9 +87,13 @@ const historyClient = createPublicClient({
   ]),
 });
 
+// ~500 000 Sepolia blocks ≈ ~2 years; well within archive-node limits but
+// avoids the "from earliest" range that all free-tier RPC providers reject.
+const FEED_LOOK_BACK = 500_000n;
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function fetchLogs(params: any): Promise<any[]> {
-  return historyClient.getLogs({ ...params, fromBlock: "earliest" }).catch(() => []);
+async function fetchLogs(params: any, fromBlock: bigint): Promise<any[]> {
+  return historyClient.getLogs({ ...params, fromBlock }).catch(() => []);
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -243,14 +247,12 @@ export function Balance() {
   }, []);
 
   useEffect(() => {
-    if (!address || !sepoliaClient) { return; }
+    if (!address) { return; }
 
     // Seed display with cache so the list never blanks out between fetches
     if (feedCache.address === address && feedCache.items.length > 0) {
       setFeedItems(feedCache.items);
     }
-
-    const client = sepoliaClient;
 
     let cancelled = false;
     setLoading(true);
@@ -258,12 +260,15 @@ export function Balance() {
 
     const addr = address as `0x${string}`;
 
-    Promise.all([
-      fetchLogs({ address: MARITIME_DEPOSIT_CONTRACT, event: DEPOSITED_EVENT,        args: { user: addr } }),
-      fetchLogs({ address: MARITIME_DEPOSIT_CONTRACT, event: WITHDRAWN_EVENT,        args: { user: addr } }),
-      fetchLogs({ address: EQUITY_VAULT_ADDRESS,      event: DEPOSITED_SHARES_EVENT, args: { to: addr } }),
-      fetchLogs({ address: EQUITY_VAULT_ADDRESS,      event: BURNED_SHARES_EVENT,    args: { from: addr } }),
-    ]).then(async ([depositedLogs, withdrawnLogs, mintLogs, burnLogs]) => {
+    historyClient.getBlockNumber().then(latest => {
+      const fromBlock = latest > FEED_LOOK_BACK ? latest - FEED_LOOK_BACK : 0n;
+      return Promise.all([
+        fetchLogs({ address: MARITIME_DEPOSIT_CONTRACT, event: DEPOSITED_EVENT,        args: { user: addr } }, fromBlock),
+        fetchLogs({ address: MARITIME_DEPOSIT_CONTRACT, event: WITHDRAWN_EVENT,        args: { user: addr } }, fromBlock),
+        fetchLogs({ address: EQUITY_VAULT_ADDRESS,      event: DEPOSITED_SHARES_EVENT, args: { to: addr } }, fromBlock),
+        fetchLogs({ address: EQUITY_VAULT_ADDRESS,      event: BURNED_SHARES_EVENT,    args: { from: addr } }, fromBlock),
+      ]);
+    }).then(async ([depositedLogs, withdrawnLogs, mintLogs, burnLogs]) => {
       if (cancelled) return;
 
       const items: FeedItem[] = [];
@@ -305,13 +310,13 @@ export function Balance() {
 
       await Promise.all([
         ...uniqueBlocks.map(async (bn) => {
-          const block = await client.getBlock({ blockNumber: bn }).catch(() => null);
+          const block = await historyClient.getBlock({ blockNumber: bn }).catch(() => null);
           if (block) blockTimes.set(bn, Number(block.timestamp) * 1000);
         }),
         ...allEquityLogs.map(async ({ log, side }) => {
           if (!log.transactionHash) return;
           try {
-            const tx      = await client.getTransaction({ hash: log.transactionHash });
+            const tx      = await historyClient.getTransaction({ hash: log.transactionHash });
             const decoded = decodeFunctionData({ abi: TRADE_EXECUTOR_ABI, data: tx.input });
             const p       = decoded.args[0] as { mdtCost?: bigint; mdtPayout?: bigint };
             const raw     = side === "buy" ? (p.mdtCost ?? 0n) : (p.mdtPayout ?? 0n);
@@ -343,7 +348,7 @@ export function Balance() {
     .finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
-  }, [address, sepoliaClient, fetchKey]);
+  }, [address, fetchKey]);
 
   // ── Not connected ──────────────────────────────────────────────────────────
   if (!address) {
