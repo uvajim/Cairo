@@ -21,6 +21,8 @@
 const express = require('express');
 const cors    = require('cors');
 const { ethers } = require('ethers');
+const { getActivityByWallet, upsertSnapshot, getLatestSnapshot, getSnapshotHistory } = require('./db');
+const indexer = require('./indexer');
 
 const app = express();
 app.use(cors());
@@ -151,7 +153,66 @@ app.post('/api/trade', async (req, res) => {
   }
 });
 
+// ── Portfolio balance (time-series) ──────────────────────────────────────────
+// Mirrors the Railway backend's /api/portfolio-balance API so the frontend
+// works identically whether pointed at localhost or production.
+
+// GET /api/portfolio-balance/:address — latest stored value
+app.get('/api/portfolio-balance/:address', (req, res) => {
+  const row = getLatestSnapshot(req.params.address);
+  if (!row) return res.json({ balance: null });
+  return res.json({ balance: row.value });
+});
+
+// PUT /api/portfolio-balance/:address — store a new snapshot
+app.put('/api/portfolio-balance/:address', (req, res) => {
+  const { balance } = req.body ?? {};
+  if (typeof balance !== 'number' || !Number.isFinite(balance)) {
+    return res.status(400).json({ error: 'balance must be a finite number' });
+  }
+  upsertSnapshot(req.params.address, balance);
+  return res.json({ balance });
+});
+
+// GET /api/portfolio-balance/:address/history?days=N — time-series points
+app.get('/api/portfolio-balance/:address/history', (req, res) => {
+  const days    = Math.max(1, Number(req.query.days) || 1);
+  const sinceSec = Math.floor(Date.now() / 1000) - days * 86400;
+  const rows    = getSnapshotHistory(req.params.address, sinceSec);
+  const points  = rows.map(r => ({
+    time:  new Date(r.recorded_at * 1000).toISOString(),
+    value: r.value,
+  }));
+  return res.json({ points });
+});
+
+// ── POST /api/activity ───────────────────────────────────────────────────────
+// Body: { walletAddress }
+// Returns: { activity: FeedItem[] }  (sorted newest-first)
+app.post('/api/activity', (req, res) => {
+  const { walletAddress } = req.body ?? {};
+  if (!walletAddress) {
+    return res.status(400).json({ error: 'walletAddress is required' });
+  }
+
+  const rows = getActivityByWallet(walletAddress);
+
+  const activity = rows.map(r => ({
+    id:        r.id,
+    kind:      r.kind,
+    ticker:    r.ticker   ?? undefined,
+    token:     r.token    ?? undefined,
+    amount:    r.amount,
+    shares:    r.shares   ?? undefined,
+    txHash:    r.tx_hash,
+    createdAt: new Date(r.block_time * 1000).toISOString(),
+  }));
+
+  return res.json({ activity });
+});
+
 app.listen(PORT, () => {
   console.log(`Trade server listening on port ${PORT} (chain ${CHAIN_ID})`);
   console.log(`Signer address: ${signer.address}`);
+  indexer.start();
 });

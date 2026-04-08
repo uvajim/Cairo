@@ -262,7 +262,18 @@ export function Portfolio() {
   const accountAgeDays = accountCreatedAt
     ? Math.max(1, Math.floor((Date.now() - new Date(accountCreatedAt).getTime()) / (24 * 60 * 60 * 1000)) + 1)
     : Number.POSITIVE_INFINITY;
-  const hasEnoughHistory = chartPoints.length >= 2;
+
+  // When there isn't enough stored history, synthesize a flat baseline from the
+  // current portfolio value so the chart always renders with the correct number.
+  const displayChartPoints = chartPoints.length >= 2 ? chartPoints : (() => {
+    const val  = Math.round(portfolioValue * 100) / 100;
+    const fmt  = (d: Date) => d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    const now  = new Date();
+    const days = RANGE_DAYS[selectedRange] ?? 1;
+    const then = new Date(now.getTime() - days * 86_400_000);
+    return [{ time: fmt(then), value: val }, { time: fmt(now), value: val }];
+  })();
+  const hasEnoughHistory = displayChartPoints.length >= 2;
 
   useEffect(() => {
     const selectedDays = RANGE_DAYS[selectedRange] ?? 1;
@@ -303,7 +314,7 @@ export function Portfolio() {
                     <PortfolioChart
                         color={chartColor}
                         showReferenceLine={false}
-                        data={chartPoints}
+                        data={displayChartPoints}
                         onHover={(v, t) => { setHoveredPrice(v); setHoveredTime(t); }}
                     />
                     {!hasEnoughHistory && (

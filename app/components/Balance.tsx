@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { createPublicClient, http, fallback } from "viem";
-import { sepolia } from "viem/chains";
 import {
   ArrowDownToLine, ArrowUpFromLine, ArrowUpRight, ArrowDownLeft,
   Loader2, ArrowDownCircle, ArrowUpCircle, CheckCircle2,
@@ -10,15 +8,14 @@ import {
 import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
 import { useWriteContract, useWaitForTransactionReceipt, useChainId, useSwitchChain, usePublicClient } from "wagmi";
-import { parseUnits, pad, maxUint256, formatUnits, parseAbiItem, decodeFunctionData } from "viem";
+import { parseUnits, pad, maxUint256 } from "viem";
 import { useWallet } from "../contexts/WalletContext";
 import { useCurrency } from "../contexts/CurrencyContext";
 import {
-  MARITIME_DEPOSIT_CONTRACT, SEPOLIA_STABLECOINS, TRADE_EXECUTOR_ADDRESS, TRADE_EXECUTOR_ABI,
+  MARITIME_DEPOSIT_CONTRACT, SEPOLIA_STABLECOINS,
   ERC20_APPROVE_ABI, MARITIME_DEPOSIT_ABI, MARITIME_WITHDRAW_ABI,
   CONTRACT_ERROR_MESSAGES,
-  EQUITY_VAULT_ADDRESS, EQUITY_VAULT_ABI,
-  CHAIN_ID, EXPLORER_URL,
+  ACTIVITY_URL,
 } from "../lib/config";
 
 const TOKEN_LOGOS: Record<"USDC" | "USDT", string> = {
@@ -33,8 +30,8 @@ interface FeedItem {
   kind: "deposit" | "withdrawal" | "buy" | "sell";
   ticker?: string;
   shares?: number;
-  token?: "USDC" | "USDT";  // stablecoin for deposits/withdrawals
-  amount: number;            // USD value
+  token?: "USDC" | "USDT";
+  amount: number;
   txHash?: string;
   createdAt: string;
 }
@@ -42,25 +39,6 @@ interface FeedItem {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const feedCache: { address: string; items: FeedItem[] } = { address: "", items: [] };
-
-const DEPOSITED_EVENT = parseAbiItem(
-  "event Deposited(address indexed user, address indexed token, uint256 amount, bytes32 userId, uint256 timestamp)"
-);
-const WITHDRAWN_EVENT = parseAbiItem(
-  "event Withdrawn(address indexed user, address indexed token, uint256 amount, uint256 timestamp)"
-);
-const DEPOSITED_SHARES_EVENT = parseAbiItem(
-  "event SharesMinted(address indexed to, string ticker, uint256 amount, address token)"
-);
-const BURNED_SHARES_EVENT = parseAbiItem(
-  "event SharesBurned(address indexed from, string ticker, uint256 amount, address token)"
-);
-
-// Reverse-lookup: Sepolia stablecoin address → symbol
-const SEPOLIA_TOKEN_BY_ADDR: Record<string, "USDC" | "USDT"> = {
-  "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238": "USDC",
-  "0x7169d38820dfd117c3fa1f22a697dba58d90ba06": "USDT",
-};
 
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -70,30 +48,6 @@ function relativeTime(iso: string): string {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24)  return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
-}
-
-// ── Dedicated history client ──────────────────────────────────────────────────
-// The wagmi public client uses Reown's bundled RPC which silently drops
-// eth_getLogs calls that exceed its range limit, returning [] with no error.
-// We bypass it entirely for log fetching and use reliable public archive nodes
-// with a fallback chain so any single outage is transparent to the user.
-
-const historyClient = createPublicClient({
-  chain: sepolia,
-  transport: fallback([
-    http("https://rpc.ankr.com/eth_sepolia"),
-    http("https://ethereum-sepolia-rpc.publicnode.com"),
-    http("https://rpc2.sepolia.org"),
-  ]),
-});
-
-// ~500 000 Sepolia blocks ≈ ~2 years; well within archive-node limits but
-// avoids the "from earliest" range that all free-tier RPC providers reject.
-const FEED_LOOK_BACK = 500_000n;
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function fetchLogs(params: any, fromBlock: bigint): Promise<any[]> {
-  return historyClient.getLogs({ ...params, fromBlock }).catch(() => []);
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -234,7 +188,7 @@ export function Balance() {
     }
   };
 
-  // ── Activity feed — fully on-chain ───────────────────────────────────────
+  // ── Activity feed — backend-indexed ──────────────────────────────────────
   const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
   const [loading,   setLoading]   = useState(false);
   const [error,     setError]     = useState<string | null>(null);
@@ -247,9 +201,9 @@ export function Balance() {
   }, []);
 
   useEffect(() => {
-    if (!address) { return; }
+    if (!address) { setFeedItems([]); return; }
 
-    // Seed display with cache so the list never blanks out between fetches
+    // Serve from cache to avoid blanking the list on tab switch
     if (feedCache.address === address && feedCache.items.length > 0) {
       setFeedItems(feedCache.items);
     }
@@ -258,94 +212,21 @@ export function Balance() {
     setLoading(true);
     setError(null);
 
-    const addr = address as `0x${string}`;
-
-    historyClient.getBlockNumber().then(latest => {
-      const fromBlock = latest > FEED_LOOK_BACK ? latest - FEED_LOOK_BACK : 0n;
-      return Promise.all([
-        fetchLogs({ address: MARITIME_DEPOSIT_CONTRACT, event: DEPOSITED_EVENT,        args: { user: addr } }, fromBlock),
-        fetchLogs({ address: MARITIME_DEPOSIT_CONTRACT, event: WITHDRAWN_EVENT,        args: { user: addr } }, fromBlock),
-        fetchLogs({ address: EQUITY_VAULT_ADDRESS,      event: DEPOSITED_SHARES_EVENT, args: { to: addr } }, fromBlock),
-        fetchLogs({ address: EQUITY_VAULT_ADDRESS,      event: BURNED_SHARES_EVENT,    args: { from: addr } }, fromBlock),
-      ]);
-    }).then(async ([depositedLogs, withdrawnLogs, mintLogs, burnLogs]) => {
-      if (cancelled) return;
-
-      const items: FeedItem[] = [];
-
-      // ── Deposits ────────────────────────────────────────────────────────────
-      for (const log of depositedLogs) {
-        const a = (log as { args?: { token?: `0x${string}`; amount?: bigint; timestamp?: bigint } }).args;
-        items.push({
-          id:        `deposit-${log.transactionHash ?? Math.random()}`,
-          kind:      "deposit",
-          token:     SEPOLIA_TOKEN_BY_ADDR[a?.token?.toLowerCase() ?? ""] ?? "USDC",
-          amount:    a?.amount != null ? Number(formatUnits(a.amount, 6)) : 0,
-          createdAt: a?.timestamp != null ? new Date(Number(a.timestamp) * 1000).toISOString() : new Date().toISOString(),
-          txHash:    (log as { transactionHash?: `0x${string}` }).transactionHash ?? undefined,
-        });
-      }
-
-      // ── Withdrawals ──────────────────────────────────────────────────────────
-      for (const log of withdrawnLogs) {
-        const a = (log as { args?: { token?: `0x${string}`; amount?: bigint; timestamp?: bigint } }).args;
-        items.push({
-          id:        `withdrawal-${log.transactionHash ?? Math.random()}`,
-          kind:      "withdrawal",
-          token:     SEPOLIA_TOKEN_BY_ADDR[a?.token?.toLowerCase() ?? ""] ?? "USDC",
-          amount:    a?.amount != null ? Number(formatUnits(a.amount, 6)) : 0,
-          createdAt: a?.timestamp != null ? new Date(Number(a.timestamp) * 1000).toISOString() : new Date().toISOString(),
-          txHash:    (log as { transactionHash?: `0x${string}` }).transactionHash ?? undefined,
-        });
-      }
-
-      // ── Equity trades: block timestamps + calldata decode ─────────────────────
-      const allEquityLogs = [
-        ...mintLogs.map(l => ({ log: l, side: "buy"  as const })),
-        ...burnLogs.map(l => ({ log: l, side: "sell" as const })),
-      ];
-
-      const uniqueBlocks = [...new Set(allEquityLogs.map(x => x.log.blockNumber!))];
-      const blockTimes   = new Map<bigint, number>();
-
-      await Promise.all([
-        ...uniqueBlocks.map(async (bn) => {
-          const block = await historyClient.getBlock({ blockNumber: bn }).catch(() => null);
-          if (block) blockTimes.set(bn, Number(block.timestamp) * 1000);
-        }),
-        ...allEquityLogs.map(async ({ log, side }) => {
-          if (!log.transactionHash) return;
-          try {
-            const tx      = await historyClient.getTransaction({ hash: log.transactionHash });
-            const decoded = decodeFunctionData({ abi: TRADE_EXECUTOR_ABI, data: tx.input });
-            const p       = decoded.args[0] as { mdtCost?: bigint; mdtPayout?: bigint };
-            const raw     = side === "buy" ? (p.mdtCost ?? 0n) : (p.mdtPayout ?? 0n);
-            (log as { _mdtAmount?: number })._mdtAmount = Number(raw) / 1_000_000;
-          } catch { /* show shares only */ }
-        }),
-      ]);
-
-      if (cancelled) return;
-
-      for (const { log, side } of allEquityLogs) {
-        items.push({
-          id:        `${side}-${log.transactionHash}`,
-          kind:      side,
-          ticker:    log.args.ticker,
-          shares:    Number(log.args.amount) / 1_000_000,
-          amount:    (log as { _mdtAmount?: number })._mdtAmount ?? 0,
-          txHash:    log.transactionHash ?? undefined,
-          createdAt: new Date(blockTimes.get(log.blockNumber!) ?? Date.now()).toISOString(),
-        });
-      }
-
-      items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      feedCache.address = address;
-      feedCache.items   = items;
-      setFeedItems(items);
+    fetch(ACTIVITY_URL, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ walletAddress: address }),
     })
-    .catch(() => { if (!cancelled) setError("loadError"); })
-    .finally(() => { if (!cancelled) setLoading(false); });
+      .then(r => r.json())
+      .then(data => {
+        if (cancelled) return;
+        const items: FeedItem[] = data.activity ?? [];
+        feedCache.address = address;
+        feedCache.items   = items;
+        setFeedItems(items);
+      })
+      .catch(() => { if (!cancelled) setError("loadError"); })
+      .finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
   }, [address, fetchKey]);
