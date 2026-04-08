@@ -94,7 +94,7 @@ body.theme-light .selection\:bg-gray-800::selection { background-color: #dbeafe 
 @media (prefers-color-scheme: dark) {
   :root {
     --surface-1: #0a0a0a;
-    --surface-2: #1e1e24;
+    --surface-2: #111116;
     --surface-3: #1a1b1f;
     --border-default: #1f2937;
     --text-muted: #9ca3af;
@@ -118,8 +118,8 @@ html.theme-dark,
 body.theme-dark {
   --app-bg: #0a0a0a;
   --app-fg: #ededed;
-  --surface-1: #000000;
-  --surface-2: #1e1e24;
+  --surface-1: #0a0a0a;
+  --surface-2: #111116;
   --surface-3: #1a1b1f;
   --border-default: #1f2937;
   --text-muted: #9ca3af;
@@ -166,8 +166,8 @@ body.theme-light .modal-scrim-heavy {
 /* ── Dhow Exchange shared component styles ── */
 
 .card {
-  background: #111827;
-  border: 1px solid #1E293B;
+  background: var(--surface-3);
+  border: 1px solid var(--border-default);
   border-radius: 16px;
   padding: 24px;
 }
@@ -211,8 +211,8 @@ body.theme-light .modal-scrim-heavy {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  background: #0F172A;
-  border: 1px solid #1E293B;
+  background: var(--surface-2);
+  border: 1px solid var(--border-default);
   border-radius: 10px;
   padding: 14px;
 }
