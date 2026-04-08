@@ -1,7 +1,7 @@
 "use client";
 
 import { Outlet, Link, useLocation, useNavigate } from "react-router";
-import { Globe, Search, CircleDollarSign, LayoutDashboard, PieChart, Smartphone, Landmark, Moon, Sun, Monitor } from "lucide-react";
+import { Globe, Search, CircleDollarSign, LayoutDashboard, PieChart, Smartphone, Moon, Sun, Monitor } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useWallet } from "../contexts/WalletContext";
@@ -19,7 +19,6 @@ const NAV_KEYS = [
   { path: "/",            key: "nav.overview",  icon: LayoutDashboard  },
   { path: "/portfolio",   key: "nav.portfolio", icon: PieChart         },
   { path: "/balance",     key: "nav.balance",   icon: CircleDollarSign },
-  { path: "/banking",     key: "nav.banking",   icon: Landmark         },
   { path: "/get-wallet",  key: "nav.getApp",    icon: Smartphone       },
 ];
 

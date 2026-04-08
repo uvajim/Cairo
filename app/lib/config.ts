@@ -189,7 +189,7 @@ export const OVERSEER_ABI = [
   },
   // Buy: mints equity shares, burns MDT
   {
-    name: "executeOffer",
+    name: "executeBuyOffer",
     type: "function",
     stateMutability: "nonpayable",
     inputs: [
@@ -213,7 +213,7 @@ export const OVERSEER_ABI = [
   },
   // Sell: burns equity shares, mints MDT back to user
   {
-    name: "executeRedeem",
+    name: "executeSellOffer",
     type: "function",
     stateMutability: "nonpayable",
     inputs: [

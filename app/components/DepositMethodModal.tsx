@@ -1,15 +1,13 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Landmark, Wallet, Loader2, ArrowDownToLine, CheckCircle2, QrCode } from "lucide-react";
+import { Wallet, Loader2, ArrowDownToLine, CheckCircle2, QrCode } from "lucide-react";
 import { useWriteContract, useChainId, useSwitchChain, usePublicClient, useSignTypedData } from "wagmi";
 import { parseUnits, pad, maxUint256 } from "viem";
-import { usePlaidLink } from "react-plaid-link";
 import { useTranslation } from "react-i18next";
 import { useWallet } from "../contexts/WalletContext";
 import {
   BACKEND_URL,
-  MOCK_MDT_CONTRACT,
   MARITIME_DEPOSIT_CONTRACT,
   SEPOLIA_STABLECOINS,
   ERC20_APPROVE_ABI,
@@ -21,13 +19,6 @@ import {
 
 const PRESETS = [50, 100, 250, 500, 1000];
 
-interface Account {
-  id: string;
-  name: string;
-  mask: string;
-  subtype: string;
-}
-
 interface TransferResult {
   transferId: string;
   status: string;
@@ -35,52 +26,6 @@ interface TransferResult {
 }
 
 interface Props { onClose: () => void; }
-
-// ── Plaid Link inner — auto-opens when mounted ────────────────────────────────
-function PlaidLinkFlow({ token, walletAddress, onDone, onError }: {
-  token: string;
-  walletAddress: string;
-  onDone: () => void;
-  onError: (msg: string) => void;
-}) {
-  const [exchanging, setExchanging] = useState(false);
-
-  const onSuccess = useCallback(async (public_token: string) => {
-    setExchanging(true);
-    try {
-      const res  = await fetch(`${BACKEND_URL}/api/plaid/exchange-token`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body:   JSON.stringify({ walletAddress, public_token }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Token exchange failed.");
-      onDone();
-    } catch (err: unknown) {
-      onError(err instanceof Error ? err.message : "Bank link failed.");
-    }
-  }, [walletAddress, onDone, onError]);
-
-  const { open, ready } = usePlaidLink({ token, onSuccess });
-  useEffect(() => { if (ready) open(); }, [ready, open]);
-
-  if (exchanging) return (
-    <div className="flex flex-col items-center py-8 gap-3">
-      <Loader2 className="w-8 h-8 text-gray-400 animate-spin" />
-      <p className="text-sm text-gray-400">Linking account…</p>
-    </div>
-  );
-
-  return (
-    <div className="flex flex-col items-center py-8 gap-3">
-      <Loader2 className="w-8 h-8 text-gray-400 animate-spin" />
-      <p className="text-sm text-gray-400">Opening Plaid…</p>
-      <button onClick={() => open()} disabled={!ready}
-        className="text-xs text-[#00c805] hover:text-[#00b004] transition-colors mt-1 disabled:opacity-40">
-        Click here if it didn&apos;t open
-      </button>
-    </div>
-  );
-}
 
 // ── WeChat Link inner — fetches QR on mount, polls until linked ───────────────
 function WeChatLinkFlow({ walletAddress, onDone, onError }: {
@@ -146,7 +91,7 @@ export function DepositMethodModal({ onClose }: Props) {
   const { t } = useTranslation();
   const { address, refreshBalance } = useWallet();
 
-  const [method, setMethod] = useState<"web3" | "bank" | "wechat" | null>(null);
+  const [method, setMethod] = useState<"web3" | "wechat" | null>(null);
 
   // ── WeChat sub-state ────────────────────────────────────────────────────────
   type WeChatState = "checking" | "unlinked" | "linked";
@@ -162,31 +107,6 @@ export function DepositMethodModal({ onClose }: Props) {
   const [wechatResult,  setWechatResult]  = useState<TransferResult | null>(null);
   const [wechatError,   setWechatError]   = useState<string | null>(null);
   const wechatPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // ── Bank sub-state ─────────────────────────────────────────────────────────
-  // "checking"  = calling /api/plaid/linked
-  // "unlinked"  = not linked yet → run Plaid Link flow
-  // "linked"    = already linked → show ACH form
-  type BankState = "checking" | "unlinked" | "linked";
-  const [bankState, setBankState] = useState<BankState>("checking");
-
-  // Plaid Link (unlinked path)
-  const [linkToken,    setLinkToken]    = useState<string | null>(null);
-  const [linkFetching, setLinkFetching] = useState(false);
-  const [linkError,    setLinkError]    = useState<string | null>(null);
-  const [linkDone,     setLinkDone]     = useState(false); // exchange succeeded
-
-  // ACH form (linked path)
-  const [accounts,        setAccounts]        = useState<Account[]>([]);
-  const [accountsLoading, setAccountsLoading] = useState(false);
-  const [achForm,         setAchForm]         = useState<"deposit" | "withdraw">("deposit");
-  const [achAccountId,    setAchAccountId]    = useState("");
-  const [achAmount,       setAchAmount]       = useState("");
-  const [achLegalName,    setAchLegalName]    = useState("");
-  const [achLoading,      setAchLoading]      = useState(false);
-  const [achStep,         setAchStep]         = useState<"signing" | "submitting" | null>(null);
-  const [achResult,       setAchResult]       = useState<TransferResult | null>(null);
-  const [achError,        setAchError]        = useState<string | null>(null);
 
   // ── WeChat payment polling (once QR is shown) ──────────────────────────────
   useEffect(() => {
@@ -263,65 +183,6 @@ export function DepositMethodModal({ onClose }: Props) {
     }
   };
 
-  // ── Triggered when user picks "Bank Account" ───────────────────────────────
-  const selectBank = useCallback(async () => {
-    if (!address) return;
-    setMethod("bank");
-    setBankState("checking");
-    setLinkToken(null);
-    setLinkError(null);
-    setLinkDone(false);
-    setAchResult(null);
-    setAchError(null);
-
-    try {
-      const res  = await fetch(`${BACKEND_URL}/api/plaid/linked`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body:   JSON.stringify({ walletAddress: address }),
-      });
-      const data = await res.json();
-
-      if (data.linked) {
-        // Already linked — fetch accounts then show ACH form
-        setBankState("linked");
-        setAccountsLoading(true);
-        try {
-          const acctRes  = await fetch(`${BACKEND_URL}/api/plaid/accounts`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body:   JSON.stringify({ walletAddress: address }),
-          });
-          const acctData = await acctRes.json();
-          const list: Account[] = acctData.accounts ?? [];
-          setAccounts(list);
-          if (list.length > 0) setAchAccountId(list[0].id);
-        } catch { /* keep empty */ }
-        finally { setAccountsLoading(false); }
-      } else {
-        // Not linked — start Plaid Link
-        setBankState("unlinked");
-        setLinkFetching(true);
-        const ltRes  = await fetch(`${BACKEND_URL}/api/plaid/create-link-token`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body:   JSON.stringify({ walletAddress: address }),
-        });
-        const ltData = await ltRes.json();
-        if (ltData.link_token) setLinkToken(ltData.link_token);
-        else setLinkError(ltData.error ?? "Failed to start bank connection.");
-        setLinkFetching(false);
-      }
-    } catch {
-      setBankState("unlinked");
-      setLinkError("Failed to check bank connection.");
-    }
-  }, [address]);
-
-  const resetBank = () => {
-    setBankState("checking");
-    setLinkToken(null); setLinkFetching(false); setLinkError(null); setLinkDone(false);
-    setAccounts([]); setAchResult(null); setAchError(null);
-    setAchAmount(""); setAchLegalName("");
-  };
-
   const resetWeChat = () => {
     setWechatState("checking"); setWechatLinkDone(false); setWechatLinkErr(null);
     setWechatAmount(""); setWechatStep(null); setWechatPayQr(null);
@@ -329,100 +190,7 @@ export function DepositMethodModal({ onClose }: Props) {
     if (wechatPollRef.current) clearInterval(wechatPollRef.current);
   };
 
-  const handleBack = () => { setMethod(null); resetBank(); resetWeChat(); };
-
-  // ── ACH transfer submit ────────────────────────────────────────────────────
-  const achAmountNum = parseFloat(achAmount);
-  const achCanSubmit = achAccountId && achLegalName.trim().length >= 2 && achAmountNum >= 1;
-
-
-  const handleAchSubmit = async () => {
-    if (!achCanSubmit || !address) return;
-    setAchLoading(true);
-    setAchError(null);
-    setAchStep(null);
-
-    if (achForm === "deposit") {
-      // ── Deposit: EIP-712 sign → /api/transfer/create ─────────────────────
-      try {
-        const amount    = achAmountNum.toFixed(2);
-        const timestamp = BigInt(Math.floor(Date.now() / 1000));
-
-        setAchStep("signing");
-        const signature = await signTypedDataAsync({
-          domain:      DEPOSIT_INTENT_DOMAIN,
-          types:       DEPOSIT_INTENT_TYPES,
-          primaryType: "DepositIntent",
-          message: {
-            walletAddress: address as `0x${string}`,
-            amount,
-            timestamp,
-          },
-        });
-
-        setAchStep("submitting");
-        const res  = await fetch(`${BACKEND_URL}/api/plaid/transfer/deposit`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body:   JSON.stringify({
-            walletAddress: address,
-            accountId:     achAccountId,
-            amount,
-            legalName:     achLegalName.trim(),
-            intentTimestamp: timestamp.toString(),
-            signature,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.reason ?? data.error ?? "Transfer failed.");
-        setAchResult(data as TransferResult);
-      } catch (err: unknown) {
-        setAchError(err instanceof Error ? err.message : "Transfer failed.");
-      } finally {
-        setAchLoading(false);
-        setAchStep(null);
-      }
-    } else {
-      // ── Withdraw: sign → /api/redeem ─────────────────────────────────────
-      try {
-        const amount    = achAmountNum.toFixed(2);
-        const timestamp = BigInt(Math.floor(Date.now() / 1000));
-
-        setAchStep("signing");
-        const signature = await signTypedDataAsync({
-          domain:      DEPOSIT_INTENT_DOMAIN,
-          types:       DEPOSIT_INTENT_TYPES,
-          primaryType: "DepositIntent",
-          message: {
-            walletAddress: address as `0x${string}`,
-            amount,
-            timestamp,
-          },
-        });
-
-        setAchStep("submitting");
-        const res = await fetch(`${BACKEND_URL}/api/redeem`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body:   JSON.stringify({
-            walletAddress:   address,
-            accountId:       achAccountId,
-            amount,
-            legalName:       achLegalName.trim(),
-            signature,
-            intentTimestamp: timestamp.toString(),
-            description:     "From Cairo",
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.reason ?? data.error ?? "Transfer failed.");
-        setAchResult(data as TransferResult);
-      } catch (err: unknown) {
-        setAchError(err instanceof Error ? err.message : "Transfer failed.");
-      } finally {
-        setAchLoading(false);
-        setAchStep(null);
-      }
-    }
-  };
+  const handleBack = () => { setMethod(null); resetWeChat(); };
 
   // ── Web3 flow ──────────────────────────────────────────────────────────────
   const [selectedAmount, setSelectedAmount] = useState<number | null>(null);
@@ -486,7 +254,7 @@ export function DepositMethodModal({ onClose }: Props) {
     }
   };
 
-  const backdropCloseable = txStep === "idle" && !linkDone && !achResult && !wechatResult && wechatStep === null;
+  const backdropCloseable = txStep === "idle" && !wechatResult && wechatStep === null;
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -503,7 +271,7 @@ export function DepositMethodModal({ onClose }: Props) {
           <>
             <h3 className="text-base font-bold mb-1">Add funds</h3>
             <p className="text-xs text-gray-400 mb-5">Choose how you want to deposit</p>
-            <div className="grid grid-cols-2 gap-3 mb-3">
+            <div className="flex flex-col gap-3 mb-3">
               <button onClick={() => setMethod("web3")}
                 className="flex flex-col items-center justify-center gap-3 surface-3 border border-default hover-surface border border-gray-700 hover:border-white/20 rounded-2xl px-4 py-6 transition-all group">
                 <div className="w-12 h-12 rounded-xl bg-[#00c805]/10 flex items-center justify-center group-hover:bg-[#00c805]/20 transition-colors">
@@ -512,17 +280,6 @@ export function DepositMethodModal({ onClose }: Props) {
                 <div className="text-center">
                   <p className="text-sm font-bold">Web3 Wallet</p>
                   <p className="text-[10px] text-gray-400 mt-0.5">USDC · USDT</p>
-                </div>
-              </button>
-
-              <button onClick={selectBank}
-                className="flex flex-col items-center justify-center gap-3 surface-3 border border-default hover-surface border border-gray-700 hover:border-white/20 rounded-2xl px-4 py-6 transition-all group">
-                <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center group-hover:bg-blue-500/20 transition-colors">
-                  <Landmark className="w-6 h-6 text-blue-400" />
-                </div>
-                <div className="text-center">
-                  <p className="text-sm font-bold">Bank Account</p>
-                  <p className="text-[10px] text-gray-400 mt-0.5">ACH · Wire</p>
                 </div>
               </button>
             </div>
@@ -537,167 +294,6 @@ export function DepositMethodModal({ onClose }: Props) {
                 <p className="text-[10px] text-gray-400 mt-0.5">Scan QR · Instant</p>
               </div>
             </button>
-          </>
-        )}
-
-        {/* ── Bank: checking link status ── */}
-        {method === "bank" && bankState === "checking" && (
-          <div className="flex flex-col items-center py-12 gap-3">
-            <Loader2 className="w-8 h-8 text-gray-400 animate-spin" />
-            <p className="text-sm text-gray-400">Checking bank connection…</p>
-          </div>
-        )}
-
-        {/* ── Bank: not linked → Plaid Link flow ── */}
-        {method === "bank" && bankState === "unlinked" && !linkDone && (
-          <>
-            <button onClick={handleBack} className="text-xs text-gray-500 hover:app-fg mb-4 transition-colors">
-              ← Back
-            </button>
-            <h3 className="text-base font-bold mb-1">Connect Bank</h3>
-            <p className="text-xs text-gray-400 mb-5">Securely link your account via Plaid</p>
-
-            {linkFetching && (
-              <div className="flex flex-col items-center py-8 gap-3">
-                <Loader2 className="w-8 h-8 text-gray-400 animate-spin" />
-                <p className="text-sm text-gray-400">Preparing secure connection…</p>
-              </div>
-            )}
-            {linkError && (
-              <div className="space-y-3 py-4">
-                <p className="text-xs text-[#ff5000]">{linkError}</p>
-                <button onClick={() => { setLinkError(null); selectBank(); }}
-                  className="text-xs font-bold text-gray-400 hover:app-fg transition-colors">
-                  Try again
-                </button>
-              </div>
-            )}
-            {linkToken && !linkError && (
-              <PlaidLinkFlow
-                token={linkToken}
-                walletAddress={address!}
-                onDone={() => setLinkDone(true)}
-                onError={msg => { setLinkError(msg); setLinkToken(null); }}
-              />
-            )}
-          </>
-        )}
-
-        {/* ── Bank: Plaid Link just completed → success ── */}
-        {method === "bank" && bankState === "unlinked" && linkDone && (
-          <div className="flex flex-col items-center py-4 gap-3 text-center">
-            <div className="w-12 h-12 rounded-full bg-[#00c805]/15 flex items-center justify-center">
-              <Landmark className="w-6 h-6 text-[#00c805]" />
-            </div>
-            <p className="font-bold">Bank account connected!</p>
-            <p className="text-xs text-gray-400">View your accounts in the Banking tab.</p>
-            <button onClick={onClose} className="mt-2 text-sm font-bold app-fg hover:opacity-80 transition-colors">
-              Close
-            </button>
-          </div>
-        )}
-
-        {/* ── Bank: already linked → ACH form ── */}
-        {method === "bank" && bankState === "linked" && (
-          <>
-            <button onClick={handleBack} className="text-xs text-gray-500 hover:app-fg mb-4 transition-colors">
-              ← Back
-            </button>
-
-            {accountsLoading ? (
-              <div className="flex flex-col items-center py-10 gap-3">
-                <Loader2 className="w-6 h-6 text-gray-400 animate-spin" />
-                <p className="text-sm text-gray-400">Loading accounts…</p>
-              </div>
-            ) : achResult ? (
-              /* ACH success */
-              <div className="flex flex-col items-center py-4 gap-3 text-center">
-                <div className="w-12 h-12 rounded-full bg-[#00c805]/15 flex items-center justify-center">
-                  <CheckCircle2 className="w-6 h-6 text-[#00c805]" />
-                </div>
-                <div>
-                  <p className="font-bold mb-1">Transfer submitted</p>
-                  <p className="text-xs text-gray-400">ACH takes 1–3 business days to settle.</p>
-                  <p className="text-xs text-gray-600 mt-1 font-mono">{achResult.transferId}</p>
-                </div>
-                <button onClick={onClose} className="mt-2 text-sm font-bold app-fg hover:opacity-80 transition-colors">
-                  Close
-                </button>
-              </div>
-            ) : (
-              /* ACH form */
-              <div className="space-y-4">
-                {/* Deposit / Withdraw toggle */}
-                <div className="flex gap-1 surface-3 border border-default rounded-full p-1 w-fit">
-                  {(["deposit", "withdraw"] as const).map(tab => (
-                    <button key={tab}
-                      onClick={() => { setAchForm(tab); setAchError(null); }}
-                      className={`px-4 py-1.5 rounded-full text-xs font-bold capitalize transition-colors ${
-                        achForm === tab ? "bg-white text-black" : "text-gray-400 hover:app-fg"
-                      }`}>
-                      {tab}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Account selector */}
-                {accounts.length > 0 ? (
-                  <div>
-                    <label className="text-xs text-gray-400 mb-1.5 block">Account</label>
-                    <select value={achAccountId} onChange={e => setAchAccountId(e.target.value)}
-                      className="w-full surface-3 border border-default rounded-xl px-3 py-2.5 text-sm app-fg outline-none focus:border-[#00c805]/40 transition-colors appearance-none">
-                      {accounts.map(a => (
-                        <option key={a.id} value={a.id}>{a.name} ···{a.mask}</option>
-                      ))}
-                    </select>
-                  </div>
-                ) : (
-                  <p className="text-xs text-gray-500">No accounts found.</p>
-                )}
-
-                {/* Amount */}
-                <div>
-                  <label className="text-xs text-gray-400 mb-1.5 block">Amount (USD)</label>
-                  <div className="surface-3 border border-default rounded-xl px-3 py-2.5 flex items-center gap-2 focus-within:border-white/30 transition-colors">
-                    <span className="text-gray-500 text-sm">$</span>
-                    <input type="number" min="1" step="0.01" placeholder="0.00"
-                      value={achAmount} onChange={e => setAchAmount(e.target.value)}
-                      className="bg-transparent text-sm app-fg outline-none flex-1 w-0" />
-                  </div>
-                </div>
-
-                {/* Legal name */}
-                <div>
-                  <label className="text-xs text-gray-400 mb-1.5 block">
-                    Legal name <span className="text-gray-600">(required for ACH)</span>
-                  </label>
-                  <input type="text" placeholder="First Last"
-                    value={achLegalName} onChange={e => setAchLegalName(e.target.value)}
-                    className="w-full surface-3 border border-default rounded-xl px-3 py-2.5 text-sm app-fg placeholder:text-muted outline-none focus:border-[#00c805]/40 transition-colors" />
-                </div>
-
-                {achError && <p className="text-xs text-[#ff5000]">{achError}</p>}
-
-                <button onClick={handleAchSubmit} disabled={!achCanSubmit || achLoading}
-                  className={`w-full py-3 text-sm font-bold rounded-full transition-colors disabled:opacity-40 flex items-center justify-center gap-2 ${
-                    achForm === "deposit"
-                      ? "bg-[#00c805] text-black hover:bg-[#00b004]"
-                      : "bg-white text-black hover:bg-gray-200"
-                  }`}>
-                  {achStep === "signing"
-                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Sign in wallet…</>
-                    : achStep === "submitting"
-                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Processing…</>
-                    : achForm === "deposit"
-                    ? achAmountNum >= 1 ? `Deposit $${achAmountNum.toFixed(2)}` : "Deposit"
-                    : achAmountNum >= 1 ? `Withdraw $${achAmountNum.toFixed(2)}` : "Withdraw"
-                  }
-                </button>
-                <p className="text-[10px] text-gray-600 text-center">
-                  ACH transfers settle in 1–3 business days.
-                </p>
-              </div>
-            )}
           </>
         )}
 
