@@ -137,12 +137,12 @@ export function middleware(request: NextRequest) {
     if (unlockParam === GEO_BYPASS_PASSWORD) {
       const url = request.nextUrl.clone();
       url.searchParams.delete("geo_unlock");
-      // Always land on the apex domain so the cookie and URL are canonical
-      if (url.hostname.startsWith("www.")) {
-        url.hostname = url.hostname.slice(4);
+      // Always land on the www domain so the cookie and URL are canonical
+      if (!url.hostname.startsWith("www.") && url.hostname.includes(".")) {
+        url.hostname = "www." + url.hostname;
       }
       const response = NextResponse.redirect(url);
-      // Use the root domain so the cookie is valid on both apex and www
+      // Use the root domain so the cookie is valid on both www and apex
       const rootDomain = url.hostname.includes(".")
         ? "." + url.hostname.split(".").slice(-2).join(".")
         : undefined;
@@ -159,12 +159,12 @@ export function middleware(request: NextRequest) {
   }
 
   // If valid bypass cookie is present, skip geo check.
-  // Also redirect www → apex so all bypassed traffic lands on the canonical domain.
+  // Also redirect apex → www so all bypassed traffic lands on the canonical domain.
   const bypassCookie = request.cookies.get(GEO_BYPASS_COOKIE)?.value;
   if (GEO_BYPASS_PASSWORD && bypassCookie === GEO_BYPASS_PASSWORD) {
-    if (request.nextUrl.hostname.startsWith("www.")) {
+    if (!request.nextUrl.hostname.startsWith("www.") && request.nextUrl.hostname.includes(".")) {
       const url = request.nextUrl.clone();
-      url.hostname = url.hostname.slice(4);
+      url.hostname = "www." + url.hostname;
       return withFavicon(NextResponse.redirect(url, 308));
     }
     return withFavicon(NextResponse.next());
