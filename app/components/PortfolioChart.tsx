@@ -1,7 +1,10 @@
+"use client";
+
 import {
   AreaChart, Area, ResponsiveContainer, ReferenceLine,
   XAxis, YAxis, Tooltip,
 } from 'recharts';
+import { useCurrency } from '../contexts/CurrencyContext';
 
 interface PortfolioChartProps {
   color?: string;
@@ -17,6 +20,7 @@ export function PortfolioChart({
   data: propData,
   onHover,
 }: PortfolioChartProps) {
+  const { formatPrice } = useCurrency();
   const chartData   = propData ?? [];
   const startValue  = chartData[0]?.value ?? 0;
   const gradientId  = `cg-${color.replace(/[^a-z0-9]/gi, '')}`;
@@ -39,12 +43,10 @@ export function PortfolioChart({
       <div className="rounded-lg border border-default surface-3 px-3 py-2 shadow-xl">
         <p className="text-[10px] text-muted">{String(label)}</p>
         <p className="text-xs font-bold app-fg">
-          ${point.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          {formatPrice(point)}
         </p>
         <p className={`text-[10px] font-semibold ${isUp ? 'text-[#00c805]' : 'text-[#ff5000]'}`}>
-          {isUp ? '+' : ''}
-          ${abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ({isUp ? '+' : ''}
-          {pct.toFixed(2)}%)
+          {isUp ? '+' : ''}{formatPrice(abs)} ({isUp ? '+' : ''}{pct.toFixed(2)}%)
         </p>
       </div>
     );

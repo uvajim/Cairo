@@ -1,55 +1,41 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { createPublicClient, http, fallback } from "viem";
+import { sepolia } from "viem/chains";
 import {
   ArrowDownToLine, ArrowUpFromLine, ArrowUpRight, ArrowDownLeft,
-  Loader2, ArrowDownCircle, ArrowUpCircle, Wallet, CheckCircle2,
+  Loader2, ArrowDownCircle, ArrowUpCircle, CheckCircle2,
 } from "lucide-react";
 import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
 import { useWriteContract, useWaitForTransactionReceipt, useChainId, useSwitchChain, usePublicClient } from "wagmi";
-import { parseUnits, pad, maxUint256, formatUnits, parseAbiItem } from "viem";
+import { parseUnits, pad, maxUint256, formatUnits, parseAbiItem, decodeFunctionData } from "viem";
 import { useWallet } from "../contexts/WalletContext";
+import { useCurrency } from "../contexts/CurrencyContext";
 import {
-  ACTIVITY_URL,
-  MARITIME_DEPOSIT_CONTRACT, SEPOLIA_STABLECOINS,
+  MARITIME_DEPOSIT_CONTRACT, SEPOLIA_STABLECOINS, TRADE_EXECUTOR_ADDRESS, TRADE_EXECUTOR_ABI,
   ERC20_APPROVE_ABI, MARITIME_DEPOSIT_ABI, MARITIME_WITHDRAW_ABI,
   CONTRACT_ERROR_MESSAGES,
   EQUITY_VAULT_ADDRESS, EQUITY_VAULT_ABI,
   CHAIN_ID, EXPLORER_URL,
 } from "../lib/config";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+const TOKEN_LOGOS: Record<"USDC" | "USDT", string> = {
+  USDC: "https://assets.coingecko.com/coins/images/6319/small/usdc.png",
+  USDT: "https://assets.coingecko.com/coins/images/325/small/Tether.png",
+};
 
-interface Order {
-  id: string;
-  ticker: string;
-  qty: string;
-  side?: "buy" | "sell";
-  tradeValue?: number;
-  estimatedCost?: number;
-  status: string;
-  alpacaOrderId: string;
-  createdAt: string;
-}
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface FeedItem {
   id: string;
-  kind: "order" | "mdt" | "equity";
-  // order fields
+  kind: "deposit" | "withdrawal" | "buy" | "sell";
   ticker?: string;
-  side?: "buy" | "sell";
-  qty?: string;
-  alpacaOrderId?: string;
-  tradeValue?: number;
-  // mdt fields
-  mdtDirection?: "in" | "out";
-  // equity fields
-  equitySide?: "buy" | "sell";
   shares?: number;
-  // common
+  token?: "USDC" | "USDT";  // stablecoin for deposits/withdrawals
+  amount: number;            // USD value
   txHash?: string;
-  amount: number;
   createdAt: string;
 }
 
@@ -63,6 +49,18 @@ const DEPOSITED_EVENT = parseAbiItem(
 const WITHDRAWN_EVENT = parseAbiItem(
   "event Withdrawn(address indexed user, address indexed token, uint256 amount, uint256 timestamp)"
 );
+const DEPOSITED_SHARES_EVENT = parseAbiItem(
+  "event SharesMinted(address indexed to, string ticker, uint256 amount, address token)"
+);
+const BURNED_SHARES_EVENT = parseAbiItem(
+  "event SharesBurned(address indexed from, string ticker, uint256 amount, address token)"
+);
+
+// Reverse-lookup: Sepolia stablecoin address → symbol
+const SEPOLIA_TOKEN_BY_ADDR: Record<string, "USDC" | "USDT"> = {
+  "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238": "USDC",
+  "0x7169d38820dfd117c3fa1f22a697dba58d90ba06": "USDT",
+};
 
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -74,12 +72,33 @@ function relativeTime(iso: string): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+// ── Dedicated history client ──────────────────────────────────────────────────
+// The wagmi public client uses Reown's bundled RPC which silently drops
+// eth_getLogs calls that exceed its range limit, returning [] with no error.
+// We bypass it entirely for log fetching and use reliable public archive nodes
+// with a fallback chain so any single outage is transparent to the user.
+
+const historyClient = createPublicClient({
+  chain: sepolia,
+  transport: fallback([
+    http("https://rpc.ankr.com/eth_sepolia"),
+    http("https://ethereum-sepolia-rpc.publicnode.com"),
+    http("https://rpc2.sepolia.org"),
+  ]),
+});
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchLogs(params: any): Promise<any[]> {
+  return historyClient.getLogs({ ...params, fromBlock: "earliest" }).catch(() => []);
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 const STABLECOIN_PRESETS = [50, 100, 250, 500, 1000];
 
 export function Balance() {
   const { t } = useTranslation();
+  const { formatPrice } = useCurrency();
   const { address, usdBalance, accountBalance, connect, refreshBalance } = useWallet();
 
   const [copied, setCopied] = useState(false);
@@ -147,6 +166,7 @@ export function Balance() {
       setDepositTxHash(depositHash);
       setTxStep("done");
       refreshBalance();
+      refreshFeed();
     } catch (err: unknown) {
       setTxStep("error");
       const e = err as { shortMessage?: string; message?: string; revert?: { name?: string }; reason?: string };
@@ -168,7 +188,7 @@ export function Balance() {
 
   useEffect(() => {
     if (!withdrawConfirmed || wdStep !== "pending") return;
-    setWdStep("done"); refreshBalance();
+    setWdStep("done"); refreshBalance(); refreshFeed();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [withdrawConfirmed]);
 
@@ -210,134 +230,120 @@ export function Balance() {
     }
   };
 
-  // ── Activity feed (orders + on-chain MDT events) ─────────────────────────
+  // ── Activity feed — fully on-chain ───────────────────────────────────────
   const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
   const [loading,   setLoading]   = useState(false);
   const [error,     setError]     = useState<string | null>(null);
+  const [fetchKey,  setFetchKey]  = useState(0);
+
+  const refreshFeed = useCallback(() => {
+    feedCache.address = "";
+    feedCache.items   = [];
+    setFetchKey(k => k + 1);
+  }, []);
 
   useEffect(() => {
-    if (!address) { setFeedItems([]); return; }
-    if (feedCache.address === address && feedCache.items.some(i => i.kind === "equity" || feedCache.items.length > 0)) {
-      setFeedItems(feedCache.items); return;
+    if (!address || !sepoliaClient) { return; }
+
+    // Seed display with cache so the list never blanks out between fetches
+    if (feedCache.address === address && feedCache.items.length > 0) {
+      setFeedItems(feedCache.items);
     }
-    setLoading(true); setError(null);
 
-    const client = sepoliaClient; // capture current value
+    const client = sepoliaClient;
 
-    const fetchOrders = fetch(ACTIVITY_URL, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ walletAddress: address }),
-    }).then(r => r.json()).then(d => (d.executedOrders ?? []) as Order[]).catch(() => [] as Order[]);
-
-    const fetchMdtDeposits = client
-      ? client.getLogs({ address: MARITIME_DEPOSIT_CONTRACT, event: DEPOSITED_EVENT,
-          args: { user: address as `0x${string}` }, fromBlock: "earliest" }).catch(() => [])
-      : Promise.resolve([]);
-
-    const fetchMdtWithdraws = client
-      ? client.getLogs({ address: MARITIME_DEPOSIT_CONTRACT, event: WITHDRAWN_EVENT,
-          args: { user: address as `0x${string}` }, fromBlock: "earliest" }).catch(() => [])
-      : Promise.resolve([]);
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
 
     const addr = address as `0x${string}`;
-    const fetchMintLogs = client
-      ? client.getContractEvents({ address: EQUITY_VAULT_ADDRESS, abi: EQUITY_VAULT_ABI,
-          eventName: 'SharesMinted', args: { to: addr }, fromBlock: "earliest" }).catch(() => [])
-      : Promise.resolve([]);
 
-    const fetchBurnLogs = client
-      ? client.getContractEvents({ address: EQUITY_VAULT_ADDRESS, abi: EQUITY_VAULT_ABI,
-          eventName: 'SharesBurned', args: { from: addr }, fromBlock: "earliest" }).catch(() => [])
-      : Promise.resolve([]);
+    Promise.all([
+      fetchLogs({ address: MARITIME_DEPOSIT_CONTRACT, event: DEPOSITED_EVENT,        args: { user: addr } }),
+      fetchLogs({ address: MARITIME_DEPOSIT_CONTRACT, event: WITHDRAWN_EVENT,        args: { user: addr } }),
+      fetchLogs({ address: EQUITY_VAULT_ADDRESS,      event: DEPOSITED_SHARES_EVENT, args: { to: addr } }),
+      fetchLogs({ address: EQUITY_VAULT_ADDRESS,      event: BURNED_SHARES_EVENT,    args: { from: addr } }),
+    ]).then(async ([depositedLogs, withdrawnLogs, mintLogs, burnLogs]) => {
+      if (cancelled) return;
 
-    Promise.all([fetchOrders, fetchMdtDeposits, fetchMdtWithdraws, fetchMintLogs, fetchBurnLogs])
-      .then(async ([orders, depositedLogs, withdrawnLogs, mintLogs, burnLogs]) => {
-        const items: FeedItem[] = [];
+      const items: FeedItem[] = [];
 
-        for (const o of orders) {
-          items.push({
-            id: `order-${o.id}`,
-            kind: "order",
-            ticker: o.ticker,
-            side: o.side,
-            qty: o.qty,
-            alpacaOrderId: o.alpacaOrderId,
-            tradeValue: o.tradeValue ?? o.estimatedCost,
-            amount: o.tradeValue ?? o.estimatedCost ?? 0,
-            createdAt: o.createdAt,
-          });
-        }
+      // ── Deposits ────────────────────────────────────────────────────────────
+      for (const log of depositedLogs) {
+        const a = (log as { args?: { token?: `0x${string}`; amount?: bigint; timestamp?: bigint } }).args;
+        items.push({
+          id:        `deposit-${log.transactionHash ?? Math.random()}`,
+          kind:      "deposit",
+          token:     SEPOLIA_TOKEN_BY_ADDR[a?.token?.toLowerCase() ?? ""] ?? "USDC",
+          amount:    a?.amount != null ? Number(formatUnits(a.amount, 6)) : 0,
+          createdAt: a?.timestamp != null ? new Date(Number(a.timestamp) * 1000).toISOString() : new Date().toISOString(),
+          txHash:    (log as { transactionHash?: `0x${string}` }).transactionHash ?? undefined,
+        });
+      }
 
-        for (const log of depositedLogs) {
-          const args = (log as { args?: { amount?: bigint; timestamp?: bigint }; transactionHash?: `0x${string}` }).args;
-          items.push({
-            id: `mdt-d-${(log as { transactionHash?: string }).transactionHash ?? Math.random()}`,
-            kind: "mdt",
-            mdtDirection: "in",
-            amount: args?.amount != null ? Number(formatUnits(args.amount, 6)) : 0,
-            createdAt: args?.timestamp != null ? new Date(Number(args.timestamp) * 1000).toISOString() : new Date().toISOString(),
-            txHash: (log as { transactionHash?: `0x${string}` }).transactionHash ?? undefined,
-          });
-        }
+      // ── Withdrawals ──────────────────────────────────────────────────────────
+      for (const log of withdrawnLogs) {
+        const a = (log as { args?: { token?: `0x${string}`; amount?: bigint; timestamp?: bigint } }).args;
+        items.push({
+          id:        `withdrawal-${log.transactionHash ?? Math.random()}`,
+          kind:      "withdrawal",
+          token:     SEPOLIA_TOKEN_BY_ADDR[a?.token?.toLowerCase() ?? ""] ?? "USDC",
+          amount:    a?.amount != null ? Number(formatUnits(a.amount, 6)) : 0,
+          createdAt: a?.timestamp != null ? new Date(Number(a.timestamp) * 1000).toISOString() : new Date().toISOString(),
+          txHash:    (log as { transactionHash?: `0x${string}` }).transactionHash ?? undefined,
+        });
+      }
 
-        for (const log of withdrawnLogs) {
-          const args = (log as { args?: { amount?: bigint; timestamp?: bigint }; transactionHash?: `0x${string}` }).args;
-          items.push({
-            id: `mdt-w-${(log as { transactionHash?: string }).transactionHash ?? Math.random()}`,
-            kind: "mdt",
-            mdtDirection: "out",
-            amount: args?.amount != null ? Number(formatUnits(args.amount, 6)) : 0,
-            createdAt: args?.timestamp != null ? new Date(Number(args.timestamp) * 1000).toISOString() : new Date().toISOString(),
-            txHash: (log as { transactionHash?: `0x${string}` }).transactionHash ?? undefined,
-          });
-        }
+      // ── Equity trades: block timestamps + calldata decode ─────────────────────
+      const allEquityLogs = [
+        ...mintLogs.map(l => ({ log: l, side: "buy"  as const })),
+        ...burnLogs.map(l => ({ log: l, side: "sell" as const })),
+      ];
 
-        // Fetch block timestamps for equity events
-        const allEquityLogs = [...mintLogs, ...burnLogs];
-        const uniqueBlocks  = [...new Set(allEquityLogs.map(l => l.blockNumber!))];
-        const blockTimes    = new Map<bigint, number>();
-        await Promise.all(uniqueBlocks.map(async (bn) => {
-          if (!client) return;
+      const uniqueBlocks = [...new Set(allEquityLogs.map(x => x.log.blockNumber!))];
+      const blockTimes   = new Map<bigint, number>();
+
+      await Promise.all([
+        ...uniqueBlocks.map(async (bn) => {
           const block = await client.getBlock({ blockNumber: bn }).catch(() => null);
           if (block) blockTimes.set(bn, Number(block.timestamp) * 1000);
-        }));
+        }),
+        ...allEquityLogs.map(async ({ log, side }) => {
+          if (!log.transactionHash) return;
+          try {
+            const tx      = await client.getTransaction({ hash: log.transactionHash });
+            const decoded = decodeFunctionData({ abi: TRADE_EXECUTOR_ABI, data: tx.input });
+            const p       = decoded.args[0] as { mdtCost?: bigint; mdtPayout?: bigint };
+            const raw     = side === "buy" ? (p.mdtCost ?? 0n) : (p.mdtPayout ?? 0n);
+            (log as { _mdtAmount?: number })._mdtAmount = Number(raw) / 1_000_000;
+          } catch { /* show shares only */ }
+        }),
+      ]);
 
-        for (const log of mintLogs) {
-          const ts = blockTimes.get(log.blockNumber!) ?? Date.now();
-          items.push({
-            id:          `equity-buy-${log.transactionHash}`,
-            kind:        "equity",
-            equitySide:  "buy",
-            ticker:      log.args.ticker,
-            shares:      Number(log.args.amount) / 1_000_000,
-            amount:      0,
-            txHash:      log.transactionHash ?? undefined,
-            createdAt:   new Date(ts).toISOString(),
-          });
-        }
+      if (cancelled) return;
 
-        for (const log of burnLogs) {
-          const ts = blockTimes.get(log.blockNumber!) ?? Date.now();
-          items.push({
-            id:          `equity-sell-${log.transactionHash}`,
-            kind:        "equity",
-            equitySide:  "sell",
-            ticker:      log.args.ticker,
-            shares:      Number(log.args.amount) / 1_000_000,
-            amount:      0,
-            txHash:      log.transactionHash ?? undefined,
-            createdAt:   new Date(ts).toISOString(),
-          });
-        }
+      for (const { log, side } of allEquityLogs) {
+        items.push({
+          id:        `${side}-${log.transactionHash}`,
+          kind:      side,
+          ticker:    log.args.ticker,
+          shares:    Number(log.args.amount) / 1_000_000,
+          amount:    (log as { _mdtAmount?: number })._mdtAmount ?? 0,
+          txHash:    log.transactionHash ?? undefined,
+          createdAt: new Date(blockTimes.get(log.blockNumber!) ?? Date.now()).toISOString(),
+        });
+      }
 
-        items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        feedCache.address = address;
-        feedCache.items = items;
-        setFeedItems(items);
-      })
-      .catch(() => setError("loadError"))
-      .finally(() => setLoading(false));
-  }, [address, sepoliaClient]);
+      items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      feedCache.address = address;
+      feedCache.items   = items;
+      setFeedItems(items);
+    })
+    .catch(() => { if (!cancelled) setError("loadError"); })
+    .finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [address, sepoliaClient, fetchKey]);
 
   // ── Not connected ──────────────────────────────────────────────────────────
   if (!address) {
@@ -371,7 +377,7 @@ export function Balance() {
         <div>
           <p className="text-sm text-gray-400 mb-2">{t("balance.totalAccount")}</p>
           <p className="text-4xl font-bold tracking-tight">
-            ${accountBalance.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {formatPrice(accountBalance)}
           </p>
           <p className="text-sm text-gray-500 mt-1">{t("balance.availableToTrade")}</p>
         </div>
@@ -429,7 +435,8 @@ export function Balance() {
                   <div className="flex gap-2">
                     {(["USDC", "USDT"] as const).map(tok => (
                       <button key={tok} onClick={() => setSelectedToken(tok)}
-                        className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${selectedToken === tok ? "bg-white text-black" : "surface-3 border border-default text-gray-300 hover:bg-gray-700"}`}>
+                        className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-bold transition-colors ${selectedToken === tok ? "bg-white text-black" : "surface-3 border border-default text-gray-300 hover:bg-gray-700"}`}>
+                        <img src={TOKEN_LOGOS[tok]} alt={tok} className="w-4 h-4 rounded-full" />
                         {tok}
                       </button>
                     ))}
@@ -438,8 +445,10 @@ export function Balance() {
                     <p className="text-xs text-yellow-400">You&apos;ll be prompted to switch to Sepolia.</p>
                   )}
                   <button onClick={handleWeb3Deposit} disabled={!depositAmount || depositAmount < 1}
-                    className="w-full py-3 bg-[#00c805] text-black text-sm font-bold rounded-full hover:bg-[#00b004] transition-colors disabled:opacity-40">
-                    {depositAmount && depositAmount >= 1 ? `Deposit ${depositAmount} ${selectedToken}` : t("overview.continue")}
+                    className="w-full py-3 bg-[#00c805] text-black text-sm font-bold rounded-full hover:bg-[#00b004] transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5">
+                    {depositAmount && depositAmount >= 1 ? (
+                      <>Deposit {depositAmount} <img src={TOKEN_LOGOS[selectedToken]} alt={selectedToken} className="w-4 h-4 rounded-full" /> {selectedToken}</>
+                    ) : t("overview.continue")}
                   </button>
                 </div>
               )}
@@ -454,8 +463,8 @@ export function Balance() {
                         {txStep === "depositing" ? "✓" : "1"}
                       </div>
                       <div>
-                        <p className={`text-sm font-semibold ${txStep === "approving" ? "app-fg" : "text-gray-500"}`}>
-                          {`Approve ${selectedToken}`}
+                        <p className={`text-sm font-semibold flex items-center gap-1.5 ${txStep === "approving" ? "app-fg" : "text-gray-500"}`}>
+                          Approve <img src={TOKEN_LOGOS[selectedToken]} alt={selectedToken} className="w-4 h-4 rounded-full" /> {selectedToken}
                         </p>
                         {txStep === "approving" && <p className="text-xs text-gray-400">Waiting for wallet…</p>}
                         {txStep === "depositing" && <p className="text-xs text-gray-400">Confirmed</p>}
@@ -521,9 +530,10 @@ export function Balance() {
                   <div className="flex gap-2">
                     {(["USDC", "USDT"] as const).map(tok => (
                       <button key={tok} onClick={() => setWithdrawToken(tok)}
-                        className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${
+                        className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-bold transition-colors ${
                           withdrawToken === tok ? "bg-white text-black" : "surface-3 border border-default text-gray-300 hover:bg-gray-700"
                         }`}>
+                        <img src={TOKEN_LOGOS[tok]} alt={tok} className="w-4 h-4 rounded-full" />
                         {tok}
                       </button>
                     ))}
@@ -543,7 +553,7 @@ export function Balance() {
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-400">{t("balance.buyingPowerRemaining")}</span>
                     <span className={`font-bold ${isOverMax ? "text-[#ff5000]" : "text-gray-300"}`}>
-                      ${Math.max(remaining, 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {formatPrice(Math.max(remaining, 0))}
                     </span>
                   </div>
                   {isOverMax && (
@@ -553,10 +563,10 @@ export function Balance() {
                   )}
                   {wdErrMsg && <p className="text-xs text-[#ff5000]">{wdErrMsg}</p>}
                   <button onClick={handleStablecoinWithdraw} disabled={!canWithdraw}
-                    className="w-full py-3 bg-white text-black text-sm font-bold rounded-full hover:bg-gray-200 transition-colors disabled:opacity-40">
-                    {withdrawNum > 0
-                      ? `Withdraw ${withdrawNum.toFixed(2)} ${withdrawToken}`
-                      : "Withdraw"}
+                    className="w-full py-3 bg-white text-black text-sm font-bold rounded-full hover:bg-gray-200 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5">
+                    {withdrawNum > 0 ? (
+                      <>Withdraw {withdrawNum.toFixed(2)} <img src={TOKEN_LOGOS[withdrawToken]} alt={withdrawToken} className="w-4 h-4 rounded-full" /> {withdrawToken}</>
+                    ) : "Withdraw"}
                   </button>
                 </div>
               )}
@@ -608,9 +618,6 @@ export function Balance() {
       <div className="surface-2 border border-default rounded-2xl px-6 py-5 mb-8 flex items-center justify-between">
         <span className="text-sm text-gray-400">{t("balance.walletAddress")}</span>
         <div className="flex items-center">
-          <div className="surface-1 px-3 py-1.5 rounded-full text-sm text-muted font-normal pr-6 -mr-4 z-0 border border-default">
-            {usdBalance.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
-          </div>
           <button
             onClick={copyAddress}
             className="flex items-center gap-1.5 surface-3 border border-default px-3 py-1.5 rounded-full text-sm font-bold z-10 relative hover-surface transition-colors cursor-pointer"
@@ -645,7 +652,18 @@ export function Balance() {
 
       {/* Activity section */}
       <div>
-        <h3 className="text-xl font-medium mb-4">{t("balance.activity")}</h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-xl font-medium">{t("balance.activity")}</h3>
+          <button
+            onClick={refreshFeed}
+            disabled={loading}
+            className="text-xs text-gray-500 hover:app-fg transition-colors disabled:opacity-40 flex items-center gap-1"
+            title="Refresh"
+          >
+            <span className={loading ? "animate-spin inline-block" : ""}>↻</span>
+            {loading ? "Loading…" : "Refresh"}
+          </button>
+        </div>
 
         {loading && (
           <div className="flex items-center justify-center py-10 gap-3 text-gray-400">
@@ -663,128 +681,90 @@ export function Balance() {
         {feedItems.length > 0 && (
           <div className="surface-3 border border-default rounded-2xl overflow-hidden divide-y divide-gray-800">
             {feedItems.map(item => {
-              // ── Stock/cash orders ────────────────────────────────────────────
-              if (item.kind === "order") {
-                const isDeposit    = item.ticker === "Deposit";
-                const isWithdrawal = item.ticker === "Withdrawal";
-                const isCash       = isDeposit || isWithdrawal;
-                const isBuy        = !isCash && (item.side === "buy" || (!item.side && item.tradeValue !== undefined));
-                const qty          = parseFloat(item.qty ?? "0");
-                const iconColor    = isDeposit    ? "bg-[#00c805]/10 text-[#00c805]"
-                                   : isWithdrawal ? "bg-[#ff5000]/10 text-[#ff5000]"
-                                   : isBuy        ? "bg-[#00c805]/10 text-[#00c805]"
-                                   :                "bg-[#ff5000]/10 text-[#ff5000]";
-                const icon         = isDeposit    ? <ArrowDownCircle className="w-4 h-4" />
-                                   : isWithdrawal ? <ArrowUpCircle   className="w-4 h-4" />
-                                   : isBuy        ? <ArrowUpRight    className="w-4 h-4" />
-                                   :                <ArrowDownLeft   className="w-4 h-4" />;
-                const valueColor   = isDeposit    ? "text-[#00c805]"
-                                   : isWithdrawal ? "text-[#ff5000]"
-                                   : isBuy        ? "text-[#ff5000]" : "text-[#00c805]";
-                return (
-                  <div key={item.id} className="p-5 hover:bg-gray-800/40 transition-colors">
-                    <div className="flex items-center gap-4">
-                      <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${iconColor}`}>{icon}</div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          {isCash
-                            ? <span className="font-bold text-sm">{item.ticker}</span>
-                            : <Link to={`/stock/${item.ticker}`} className="font-bold text-sm hover:text-[#00c805] transition-colors">{item.ticker}</Link>
-                          }
-                          {!isCash && (
+              const isDeposit    = item.kind === "deposit";
+              const isWithdrawal = item.kind === "withdrawal";
+              const isBuy        = item.kind === "buy";
+              const isSell       = item.kind === "sell";
+              const isCash       = isDeposit || isWithdrawal;
+
+              const iconBg = isDeposit ? "bg-[#00c805]/10 text-[#00c805]"
+                           : isWithdrawal ? "bg-[#ff5000]/10 text-[#ff5000]"
+                           : isBuy  ? "bg-[#00c805]/10 text-[#00c805]"
+                           :          "bg-[#ff5000]/10 text-[#ff5000]";
+
+              const icon = isDeposit    ? <ArrowDownCircle className="w-4 h-4" />
+                         : isWithdrawal ? <ArrowUpCircle   className="w-4 h-4" />
+                         : isBuy        ? <ArrowUpRight    className="w-4 h-4" />
+                         :                <ArrowDownLeft   className="w-4 h-4" />;
+
+              const explorerBase = "https://sepolia.etherscan.io";
+
+              return (
+                <div key={item.id} className="p-5 hover:bg-gray-800/40 transition-colors">
+                  <div className="flex items-center gap-4">
+
+                    {/* Icon */}
+                    <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${iconBg}`}>
+                      {icon}
+                    </div>
+
+                    {/* Label + tx link */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        {isCash ? (
+                          <div className="flex items-center gap-1.5">
+                            {item.token && (
+                              <img src={TOKEN_LOGOS[item.token]} alt={item.token} className="w-4 h-4 rounded-full" />
+                            )}
+                            <span className="font-bold text-sm">
+                              {isDeposit ? "Deposit" : "Withdrawal"}
+                            </span>
+                            {item.token && (
+                              <span className="text-xs text-gray-400">{item.token}</span>
+                            )}
+                          </div>
+                        ) : (
+                          <>
+                            {item.ticker
+                              ? <Link to={`/stock/${item.ticker}`} className="font-bold text-sm hover:text-[#00c805] transition-colors">{item.ticker}</Link>
+                              : <span className="font-bold text-sm">Trade</span>
+                            }
                             <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${isBuy ? "bg-[#00c805]/15 text-[#00c805]" : "bg-[#ff5000]/15 text-[#ff5000]"}`}>
                               {isBuy ? "BUY" : "SELL"}
                             </span>
-                          )}
-                        </div>
-                        {item.alpacaOrderId && (
-                          <p className="text-xs text-gray-500 font-mono">ID: {item.alpacaOrderId.split("-")[0]}…</p>
+                          </>
                         )}
                       </div>
-                      <div className="text-right shrink-0">
-                        <p className={`font-bold text-sm ${valueColor}`}>
-                          {isDeposit ? "+" : "−"}${item.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </p>
-                        {!isCash && <p className="text-xs text-gray-400">{t("balance.shares", { count: qty })}</p>}
-                        <p className="text-xs text-gray-500 mt-0.5">{relativeTime(item.createdAt)}</p>
-                      </div>
+                      {item.txHash && (
+                        <a href={`${explorerBase}/tx/${item.txHash}`} target="_blank" rel="noopener noreferrer"
+                          className="text-xs font-mono text-gray-500 hover:app-fg transition-colors">
+                          {item.txHash.slice(0, 8)}…{item.txHash.slice(-6)}
+                        </a>
+                      )}
                     </div>
-                  </div>
-                );
-              }
 
-              // ── On-chain MDT events ──────────────────────────────────────────
-              if (item.kind === "mdt") {
-                const isIn = item.mdtDirection === "in";
-                return (
-                  <div key={item.id} className="p-5 hover:bg-gray-800/40 transition-colors">
-                    <div className="flex items-center gap-4">
-                      <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${isIn ? "bg-[#00c805]/10 text-[#00c805]" : "bg-[#ff5000]/10 text-[#ff5000]"}`}>
-                        <Wallet className="w-4 h-4" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-bold text-sm">{isIn ? "Crypto Deposit" : "Crypto Withdrawal"}</span>
-                          <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${isIn ? "bg-[#00c805]/15 text-[#00c805]" : "bg-[#ff5000]/15 text-[#ff5000]"}`}>
-                            {isIn ? "+MDT" : "−MDT"}
-                          </span>
-                        </div>
-                        {item.txHash && (
-                          <a href={`https://sepolia.etherscan.io/tx/${item.txHash}`} target="_blank" rel="noopener noreferrer"
-                            className="text-xs font-mono text-gray-500 hover:app-fg transition-colors">
-                            {item.txHash.slice(0, 8)}…{item.txHash.slice(-6)}
-                          </a>
-                        )}
-                      </div>
-                      <div className="text-right shrink-0">
-                        <p className={`font-bold text-sm ${isIn ? "text-[#00c805]" : "text-[#ff5000]"}`}>
-                          {isIn ? "+" : "−"}{item.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MDT
+                    {/* Amount + time */}
+                    <div className="text-right shrink-0">
+                      {isCash ? (
+                        <p className={`font-bold text-sm ${isDeposit ? "text-[#00c805]" : "text-[#ff5000]"}`}>
+                          {isDeposit ? "+" : "−"}{formatPrice(item.amount)}
                         </p>
-                        <p className="text-xs text-gray-500 mt-0.5">{relativeTime(item.createdAt)}</p>
-                      </div>
+                      ) : (
+                        <>
+                          <p className={`font-bold text-sm ${isBuy ? "text-[#ff5000]" : "text-[#00c805]"}`}>
+                            {isBuy ? "−" : "+"}{item.amount > 0 ? formatPrice(item.amount) : "—"}
+                          </p>
+                          <p className="text-xs text-gray-400">
+                            {item.shares != null ? t("balance.shares", { count: item.shares }) : ""}
+                          </p>
+                        </>
+                      )}
+                      <p className="text-xs text-gray-500 mt-0.5">{relativeTime(item.createdAt)}</p>
                     </div>
-                  </div>
-                );
-              }
 
-              // ── On-chain equity trades ───────────────────────────────────────
-              if (item.kind === "equity") {
-                const isBuy = item.equitySide === "buy";
-                return (
-                  <div key={item.id} className="p-5 hover:bg-gray-800/40 transition-colors">
-                    <div className="flex items-center gap-4">
-                      <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${isBuy ? "bg-[#00c805]/10 text-[#00c805]" : "bg-[#ff5000]/10 text-[#ff5000]"}`}>
-                        {isBuy ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownLeft className="w-4 h-4" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          {item.ticker
-                            ? <Link to={`/stock/${item.ticker}`} className="font-bold text-sm hover:text-[#00c805] transition-colors">{item.ticker}</Link>
-                            : <span className="font-bold text-sm">Trade</span>
-                          }
-                          <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${isBuy ? "bg-[#00c805]/15 text-[#00c805]" : "bg-[#ff5000]/15 text-[#ff5000]"}`}>
-                            {isBuy ? "BUY" : "SELL"}
-                          </span>
-                        </div>
-                        {item.txHash && (
-                          <a href={`${EXPLORER_URL}/tx/${item.txHash}`} target="_blank" rel="noopener noreferrer"
-                            className="text-xs font-mono text-gray-500 hover:app-fg transition-colors">
-                            {item.txHash.slice(0, 8)}…{item.txHash.slice(-6)}
-                          </a>
-                        )}
-                      </div>
-                      <div className="text-right shrink-0">
-                        <p className="font-bold text-sm">
-                          {item.shares} share{item.shares !== 1 ? "s" : ""}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-0.5">{relativeTime(item.createdAt)}</p>
-                      </div>
-                    </div>
                   </div>
-                );
-              }
-
-              return null;
+                </div>
+              );
             })}
           </div>
         )}

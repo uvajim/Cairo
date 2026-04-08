@@ -4,6 +4,7 @@ import { Link } from "react-router";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useSnapshots } from "../hooks/useSnapshots";
+import { useCurrency } from "../contexts/CurrencyContext";
 
 // Indices are displayed by name but priced via their ETF proxies.
 const INDICES = [
@@ -31,6 +32,7 @@ const ALL_SYMBOLS = [
 export function Watchlist() {
   const { t } = useTranslation();
   const quotes = useSnapshots(ALL_SYMBOLS);
+  const { formatPrice } = useCurrency();
 
   const today = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
@@ -128,7 +130,7 @@ export function Watchlist() {
                     {q ? (
                       <>
                         <div className="font-medium text-sm app-fg">
-                          ${q.price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {formatPrice(q.price)}
                         </div>
                         <div className={`text-xs font-medium ${isUp ? "text-[#00c805]" : "text-[#ff5000]"}`}>
                           {isUp ? "+" : ""}{q.changePercent.toFixed(2)}%

@@ -16,6 +16,11 @@ import {
 
 const PRESETS = [50, 100, 250, 500, 1000];
 
+const TOKEN_LOGOS: Record<"USDC" | "USDT", string> = {
+  USDC: "https://assets.coingecko.com/coins/images/6319/small/usdc.png",
+  USDT: "https://assets.coingecko.com/coins/images/325/small/Tether.png",
+};
+
 interface Props { onClose: () => void; }
 
 export function DepositMethodModal({ onClose }: Props) {
@@ -125,7 +130,8 @@ export function DepositMethodModal({ onClose }: Props) {
             <div className="flex gap-2 mb-4">
               {(["USDC", "USDT"] as const).map(tok => (
                 <button key={tok} onClick={() => setSelectedToken(tok)}
-                  className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${selectedToken === tok ? "bg-white text-black" : "surface-3 border border-default text-gray-300 hover:bg-gray-700"}`}>
+                  className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-bold transition-colors ${selectedToken === tok ? "bg-white text-black" : "surface-3 border border-default text-gray-300 hover:bg-gray-700"}`}>
+                  <img src={TOKEN_LOGOS[tok]} alt={tok} className="w-4 h-4 rounded-full" />
                   {tok}
                 </button>
               ))}
@@ -136,8 +142,10 @@ export function DepositMethodModal({ onClose }: Props) {
             )}
 
             <button onClick={handleDeposit} disabled={!depositAmount || depositAmount < 1}
-              className="w-full bg-[#00c805] text-black text-sm font-bold py-2.5 rounded-full hover:bg-[#00b004] transition-colors disabled:opacity-40">
-              {depositAmount && depositAmount >= 1 ? `Deposit ${depositAmount} ${selectedToken}` : t("overview.continue")}
+              className="w-full bg-[#00c805] text-black text-sm font-bold py-2.5 rounded-full hover:bg-[#00b004] transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5">
+              {depositAmount && depositAmount >= 1 ? (
+                <>Deposit {depositAmount} <img src={TOKEN_LOGOS[selectedToken]} alt={selectedToken} className="w-4 h-4 rounded-full" /> {selectedToken}</>
+              ) : t("overview.continue")}
             </button>
           </>
         )}
@@ -153,8 +161,8 @@ export function DepositMethodModal({ onClose }: Props) {
                   {txStep === "depositing" ? "✓" : "1"}
                 </div>
                 <div>
-                  <p className={`text-sm font-semibold ${txStep === "approving" ? "app-fg" : "text-gray-500"}`}>
-                    {`Approve ${selectedToken}`}
+                  <p className={`text-sm font-semibold flex items-center gap-1.5 ${txStep === "approving" ? "app-fg" : "text-gray-500"}`}>
+                    Approve <img src={TOKEN_LOGOS[selectedToken]} alt={selectedToken} className="w-4 h-4 rounded-full" /> {selectedToken}
                   </p>
                   {txStep === "approving" && <p className="text-xs text-gray-400">Waiting for wallet…</p>}
                   {txStep === "depositing" && <p className="text-xs text-gray-400">Confirmed</p>}

@@ -8,6 +8,7 @@ import { useWallet } from "../contexts/WalletContext";
 import { BACKEND_URL } from "../lib/config";
 import "../lib/i18n";
 import { LANGUAGES } from "../lib/i18n";
+import { useCurrency, CURRENCIES } from "../contexts/CurrencyContext";
 
 interface SearchResult {
   symbol: string;
@@ -49,6 +50,9 @@ export function Layout() {
 
   const [showLangMenu, setShowLangMenu] = useState(false);
   const langMenuRef = useRef<HTMLDivElement>(null);
+  const [showCurrencyMenu, setShowCurrencyMenu] = useState(false);
+  const currencyMenuRef = useRef<HTMLDivElement>(null);
+  const { currency, setCurrency } = useCurrency();
   const [themeChoice, setThemeChoice] = useState<ThemeChoice>("system");
 
   useEffect(() => {
@@ -88,6 +92,9 @@ export function Layout() {
       }
       if (langMenuRef.current && !langMenuRef.current.contains(e.target as Node)) {
         setShowLangMenu(false);
+      }
+      if (currencyMenuRef.current && !currencyMenuRef.current.contains(e.target as Node)) {
+        setShowCurrencyMenu(false);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -238,6 +245,33 @@ export function Layout() {
                       >
                         {label}
                         {i18n.language === code && <span className="text-[#00c805]">✓</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Currency picker */}
+              <div ref={currencyMenuRef} className="hidden md:block relative">
+                <button
+                  onClick={() => setShowCurrencyMenu(v => !v)}
+                  className="flex items-center gap-1 text-muted transition-colors text-sm font-medium"
+                  title="Currency"
+                >
+                  {currency}
+                </button>
+                {showCurrencyMenu && (
+                  <div className="absolute top-full right-0 mt-2 w-28 surface-2 border border-default rounded-xl shadow-xl overflow-y-auto max-h-64 z-50">
+                    {CURRENCIES.map(c => (
+                      <button
+                        key={c}
+                        onClick={() => { setCurrency(c); setShowCurrencyMenu(false); }}
+                        className={`w-full px-4 py-2.5 text-sm text-left transition-colors hover-surface flex items-center justify-between ${
+                          currency === c ? "app-fg font-bold" : "text-muted"
+                        }`}
+                      >
+                        {c}
+                        {currency === c && <span className="text-[#00c805]">✓</span>}
                       </button>
                     ))}
                   </div>

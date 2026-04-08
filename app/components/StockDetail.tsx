@@ -9,6 +9,7 @@ import { formatUnits } from 'viem';
 import { PortfolioChart } from './PortfolioChart';
 import { ArrowLeft, CheckCircle2, ExternalLink, Loader2, Newspaper, XCircle } from 'lucide-react';
 import { useWallet } from '../contexts/WalletContext';
+import { useCurrency } from '../contexts/CurrencyContext';
 import {
   BACKEND_URL,
   MARITIME_API_URL,
@@ -68,6 +69,7 @@ function formatVolume(v: number): string {
 // ─── Inner component — remounted via key={symbol} so state resets on nav ───
 function StockDetailContent({ symbol }: { symbol: string }) {
   const { t } = useTranslation();
+  const { formatPrice } = useCurrency();
   const [selectedRange, setSelectedRange] = useState('1D');
   const [orderType, setOrderType]         = useState<'buy' | 'sell'>('buy');
   const [amount,    setAmount]            = useState('');
@@ -279,14 +281,14 @@ function StockDetailContent({ symbol }: { symbol: string }) {
   }
 
   const stats = snapshot ? [
-    { label: t('stock.highToday'), value: `$${snapshot.high.toFixed(2)}`      },
-    { label: t('stock.lowToday'),  value: `$${snapshot.low.toFixed(2)}`       },
-    { label: t('stock.openPrice'), value: `$${snapshot.open.toFixed(2)}`      },
-    { label: t('stock.prevClose'), value: `$${snapshot.prevClose.toFixed(2)}` },
-    { label: t('stock.volume'),    value: formatVolume(snapshot.volume)        },
-    { label: t('stock.vwap'),      value: `$${snapshot.vwap.toFixed(2)}`      },
-    { label: t('stock.bid'),       value: `$${snapshot.bidPrice.toFixed(2)}`  },
-    { label: t('stock.ask'),       value: `$${snapshot.askPrice.toFixed(2)}`  },
+    { label: t('stock.highToday'), value: formatPrice(snapshot.high)      },
+    { label: t('stock.lowToday'),  value: formatPrice(snapshot.low)       },
+    { label: t('stock.openPrice'), value: formatPrice(snapshot.open)      },
+    { label: t('stock.prevClose'), value: formatPrice(snapshot.prevClose) },
+    { label: t('stock.volume'),    value: formatVolume(snapshot.volume)   },
+    { label: t('stock.vwap'),      value: formatPrice(snapshot.vwap)      },
+    { label: t('stock.bid'),       value: formatPrice(snapshot.bidPrice)  },
+    { label: t('stock.ask'),       value: formatPrice(snapshot.askPrice)  },
   ] : [];
 
   return (
@@ -313,14 +315,14 @@ function StockDetailContent({ symbol }: { symbol: string }) {
                 ) : (
                     <>
                       <h2 className="text-4xl font-bold tracking-tight">
-                        ${(hoveredPrice ?? price).toFixed(2)}
+                        {formatPrice(hoveredPrice ?? price)}
                       </h2>
                       {hoveredTime ? (
                           <p className="text-sm text-gray-400 mt-1">{hoveredTime}</p>
                       ) : (
                           <div className={`flex items-center text-sm font-medium mt-1 ${isPositive ? 'text-[#00c805]' : 'text-[#ff5000]'}`}>
                     <span>
-                      {isPositive ? '+' : ''}${change.toFixed(2)} ({Math.abs(changePercent).toFixed(2)}%) {t('stock.today')}
+                      {isPositive ? '+' : ''}{formatPrice(change)} ({Math.abs(changePercent).toFixed(2)}%) {t('stock.today')}
                     </span>
                           </div>
                       )}
@@ -407,9 +409,7 @@ function StockDetailContent({ symbol }: { symbol: string }) {
                       <div className="flex justify-between items-center border-t border-default pt-4">
                         <span className="text-sm text-gray-400">{t('stock.totalValue')}</span>
                         <span className="text-sm font-bold">
-                          {price > 0
-                            ? `$${(ownedShares * price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                            : '—'}
+                          {price > 0 ? formatPrice(ownedShares * price) : '—'}
                         </span>
                       </div>
                     </div>
@@ -488,7 +488,7 @@ function StockDetailContent({ symbol }: { symbol: string }) {
                             <div className="flex justify-between text-sm">
                               <span className="text-gray-400">{t('stock.available')}</span>
                               <span className={`font-bold ${insufficientFunds ? 'text-[#ff5000]' : 'text-gray-300'}`}>
-                                ${accountBalance.toFixed(2)}
+                                {formatPrice(accountBalance)}
                               </span>
                             </div>
                           )}
@@ -498,7 +498,7 @@ function StockDetailContent({ symbol }: { symbol: string }) {
                               <div className="flex justify-between text-sm">
                                 <span className="text-gray-400">{t('stock.marketPrice')}</span>
                                 <span className="font-bold">
-                                  {price > 0 ? `$${price.toFixed(2)} ${t('stock.perShare')}` : '—'}
+                                  {price > 0 ? `${formatPrice(price)} ${t('stock.perShare')}` : '—'}
                                 </span>
                               </div>
                               <div className="flex justify-between text-sm">
@@ -510,9 +510,7 @@ function StockDetailContent({ symbol }: { symbol: string }) {
                               <div className="flex justify-between text-sm">
                                 <span className="text-gray-400">{t('stock.totalValue')}</span>
                                 <span className="font-bold text-gray-300">
-                                  {price > 0 && ownedShares > 0
-                                    ? `$${(ownedShares * price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                    : '—'}
+                                  {price > 0 && ownedShares > 0 ? formatPrice(ownedShares * price) : '—'}
                                 </span>
                               </div>
                             </>
@@ -522,7 +520,7 @@ function StockDetailContent({ symbol }: { symbol: string }) {
                         <div className="border-t border-default pt-4">
                           <div className="flex justify-between text-xs text-gray-500 mb-4">
                             <span>{t('stock.marketPrice')}</span>
-                            <span>{loading ? '—' : `$${price.toFixed(2)} ${t('stock.perShare')}`}</span>
+                            <span>{loading ? '—' : `${formatPrice(price)} ${t('stock.perShare')}`}</span>
                           </div>
                           <button
                               onClick={handleTrade}

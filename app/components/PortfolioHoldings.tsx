@@ -9,6 +9,7 @@ import { usePublicClient } from "wagmi";
 import { useWallet } from "../contexts/WalletContext";
 import { BACKEND_URL, EQUITY_VAULT_ADDRESS, EQUITY_VAULT_ABI, CHAIN_ID } from "../lib/config";
 import { holdingsCache } from "../lib/holdingsCache";
+import { useCurrency } from "../contexts/CurrencyContext";
 
 function HoldingRow({
   ticker,
@@ -22,6 +23,7 @@ function HoldingRow({
   total: number;
 }) {
   const { t } = useTranslation();
+  const { formatPrice } = useCurrency();
   const [imgError, setImgError] = useState(false);
 
   return (
@@ -54,14 +56,10 @@ function HoldingRow({
       </div>
       <div className="text-right">
         <p className="font-bold text-sm">
-          {total > 0
-            ? `$${total.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-            : "—"}
+          {total > 0 ? formatPrice(total) : "—"}
         </p>
         <p className="text-xs text-gray-400">
-          {price > 0
-            ? `$${price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${t("portfolio.perShare")}`
-            : "—"}
+          {price > 0 ? `${formatPrice(price)} ${t("portfolio.perShare")}` : "—"}
         </p>
       </div>
     </Link>
@@ -70,6 +68,7 @@ function HoldingRow({
 
 export function PortfolioHoldings() {
   const { t } = useTranslation();
+  const { formatPrice } = useCurrency();
   const { address } = useWallet();
   const publicClient = usePublicClient({ chainId: CHAIN_ID });
 
@@ -195,7 +194,7 @@ export function PortfolioHoldings() {
           <div className="surface-2 border border-default rounded-2xl px-6 py-5 mb-6 flex items-center justify-between">
             <span className="text-sm text-gray-400">{t("portfolio.totalValue")}</span>
             <span className="text-xl font-bold">
-              ${totalValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatPrice(totalValue)}
             </span>
           </div>
 

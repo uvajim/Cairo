@@ -11,9 +11,11 @@ import { useWallet } from "../contexts/WalletContext";
 import { BACKEND_URL, EQUITY_VAULT_ADDRESS, EQUITY_VAULT_ABI, CHAIN_ID, PORTFOLIO_BALANCE_API_URL } from "../lib/config";
 import { DepositMethodModal } from "./DepositMethodModal";
 import { holdingsCache } from "../lib/holdingsCache";
+import { useCurrency } from "../contexts/CurrencyContext";
 
 function HoldingRow({ ticker, qty, price, total }: { ticker: string; qty: number; price: number; total: number }) {
   const { t } = useTranslation();
+  const { formatPrice } = useCurrency();
   const [imgError, setImgError] = useState(false);
   return (
       <Link to={`/stock/${ticker}`} className="flex items-center justify-between py-3 border-b border-default last:border-0 hover-surface -mx-1 px-1 rounded-lg transition-colors">
@@ -40,10 +42,10 @@ function HoldingRow({ ticker, qty, price, total }: { ticker: string; qty: number
         </div>
         <div className="text-right">
           <p className="text-sm font-bold">
-            {total > 0 ? `$${total.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
+            {total > 0 ? formatPrice(total) : "—"}
           </p>
           <p className="text-xs text-muted">
-            {price > 0 ? `$${price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${t("portfolio.perShare")}` : "—"}
+            {price > 0 ? `${formatPrice(price)} ${t("portfolio.perShare")}` : "—"}
           </p>
         </div>
       </Link>
@@ -61,6 +63,7 @@ const chartCache: Record<string, { time: string; value: number }[]> = {};
 
 export function Portfolio() {
   const { t } = useTranslation();
+  const { formatPrice } = useCurrency();
   const [selectedRange, setSelectedRange] = useState("1D");
   const [hoveredPrice, setHoveredPrice]   = useState<number | null>(null);
   const [hoveredTime,  setHoveredTime]    = useState<string | null>(null);
@@ -274,7 +277,7 @@ export function Portfolio() {
 
               <div>
                 <h2 className="text-4xl font-bold tracking-tight mb-1">
-                  ${displayValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {formatPrice(displayValue)}
                 </h2>
                 {hoveredTime && (
                   <p className="text-xs text-muted">At {hoveredTime}</p>
@@ -337,7 +340,7 @@ export function Portfolio() {
                     <div>
                       <p className="text-xs text-soft uppercase tracking-widest mb-0.5">{t("overview.buyingPower")}</p>
                       <p className="text-lg font-bold">
-                        ${accountBalance.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {formatPrice(accountBalance)}
                       </p>
                     </div>
                     <button
