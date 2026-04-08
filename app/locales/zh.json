@@ -34,7 +34,8 @@
     "empty": "暂无持仓——立即购买股票开始投资",
     "shares": "{{count}} 股",
     "shares_plural": "{{count}} 股",
-    "perShare": "/ 股"
+    "perShare": "/ 股",
+    "noHistory": "此时间范围内历史数据不足"
   },
   "balance": {
     "title": "余额",

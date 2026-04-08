@@ -34,7 +34,8 @@
     "empty": "Sem posições — compre ações para começar",
     "shares": "{{count}} ação",
     "shares_plural": "{{count}} ações",
-    "perShare": "/ ação"
+    "perShare": "/ ação",
+    "noHistory": "Histórico insuficiente para este intervalo"
   },
   "balance": {
     "title": "Saldo",

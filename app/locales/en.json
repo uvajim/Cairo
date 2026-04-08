@@ -34,7 +34,8 @@
     "empty": "No holdings yet — buy some stocks to get started",
     "shares": "{{count}} share",
     "shares_plural": "{{count}} shares",
-    "perShare": "/ share"
+    "perShare": "/ share",
+    "noHistory": "Not enough history yet for this time range"
   },
   "balance": {
     "title": "Balance",

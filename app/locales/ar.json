@@ -34,7 +34,8 @@
     "empty": "لا توجد أصول بعد — اشترِ بعض الأسهم للبدء",
     "shares": "{{count}} سهم",
     "shares_plural": "{{count}} سهم",
-    "perShare": "/ سهم"
+    "perShare": "/ سهم",
+    "noHistory": "لا يوجد تاريخ كافٍ لهذا النطاق الزمني"
   },
   "balance": {
     "title": "الرصيد",

@@ -296,7 +296,7 @@ export function Portfolio() {
                     {!hasEnoughHistory && (
                       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                         <div className="px-3 py-1.5 rounded-full surface-3 border border-default text-xs text-muted">
-                          Not enough history yet for this time range
+                          {t("portfolio.noHistory")}
                         </div>
                       </div>
                     )}
