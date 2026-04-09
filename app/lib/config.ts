@@ -94,7 +94,7 @@ export const STABLECOIN_ADDRESSES: Record<string, string> = {
 export const MARITIME_DEPOSIT_CONTRACT =
   process.env.NEXT_PUBLIC_MARITIME_DEPOSIT_CONTRACT as `0x${string}`;
 
-export const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? 11155111);
+export const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? 1);
 
 const EXPLORER_ROOTS: Record<number, string> = {
   1:        'https://etherscan.io',
