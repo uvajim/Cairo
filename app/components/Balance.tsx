@@ -327,9 +327,6 @@ export function Balance() {
                       </button>
                     ))}
                   </div>
-                  {chainId !== 11155111 && depositAmount && depositAmount > 0 && (
-                    <p className="text-xs text-yellow-400">You&apos;ll be prompted to switch to Sepolia.</p>
-                  )}
                   <button onClick={handleWeb3Deposit} disabled={!depositAmount || depositAmount < 1}
                     className="w-full py-3 bg-[#00c805] text-black text-sm font-bold rounded-full hover:bg-[#00b004] transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5">
                     {depositAmount && depositAmount >= 1 ? (
