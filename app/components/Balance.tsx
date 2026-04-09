@@ -12,9 +12,9 @@ import { parseUnits, pad, maxUint256 } from "viem";
 import { useWallet } from "../contexts/WalletContext";
 import { useCurrency } from "../contexts/CurrencyContext";
 import {
-  MARITIME_DEPOSIT_CONTRACT, SEPOLIA_STABLECOINS,
+  MARITIME_DEPOSIT_CONTRACT, STABLECOIN_ADDRESSES,
   ERC20_APPROVE_ABI, MARITIME_DEPOSIT_ABI, MARITIME_WITHDRAW_ABI,
-  CONTRACT_ERROR_MESSAGES,
+  CONTRACT_ERROR_MESSAGES, CHAIN_ID, EXPLORER_URL,
   ACTIVITY_URL,
 } from "../lib/config";
 
@@ -86,19 +86,19 @@ export function Balance() {
   const { writeContractAsync } = useWriteContract();
   const chainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
-  const sepoliaClient = usePublicClient({ chainId: 11155111 });
+  const publicClient = usePublicClient({ chainId: CHAIN_ID });
 
   const handleWeb3Deposit = async () => {
-    if (!depositAmount || depositAmount < 1 || !address || !sepoliaClient) return;
+    if (!depositAmount || depositAmount < 1 || !address || !publicClient) return;
     setTxStep("approving"); setTxErrMsg(null); setSkipApprove(false);
     try {
-      if (chainId !== 11155111) await switchChainAsync({ chainId: 11155111 });
-      const tokenAddress = SEPOLIA_STABLECOINS[selectedToken];
+      if (chainId !== CHAIN_ID) await switchChainAsync({ chainId: CHAIN_ID });
+      const tokenAddress = STABLECOIN_ADDRESSES[selectedToken] as `0x${string}`;
       const rawAmount    = parseUnits(depositAmount.toString(), 6);
       const userId       = pad(address as `0x${string}`, { size: 32 });
 
       // Check existing allowance — skip approve if already sufficient
-      const currentAllowance = await sepoliaClient.readContract({
+      const currentAllowance = await publicClient.readContract({
         address: tokenAddress, abi: ERC20_APPROVE_ABI,
         functionName: "allowance", args: [address as `0x${string}`, MARITIME_DEPOSIT_CONTRACT],
       });
@@ -108,7 +108,7 @@ export function Balance() {
           functionName: "approve", args: [MARITIME_DEPOSIT_CONTRACT, maxUint256],
           gas: 100_000n,
         });
-        await sepoliaClient.waitForTransactionReceipt({ hash: approveHash });
+        await publicClient.waitForTransactionReceipt({ hash: approveHash });
       } else {
         setSkipApprove(true);
       }
@@ -119,7 +119,7 @@ export function Balance() {
         functionName: "deposit", args: [tokenAddress, rawAmount, userId],
         gas: 200_000n,
       });
-      await sepoliaClient.waitForTransactionReceipt({ hash: depositHash });
+      await publicClient.waitForTransactionReceipt({ hash: depositHash });
 
       setDepositTxHash(depositHash);
       setTxStep("done");
@@ -156,15 +156,15 @@ export function Balance() {
   const canWithdraw  = withdrawNum > 0 && !isOverMax;
 
   const handleStablecoinWithdraw = async () => {
-    if (!canWithdraw || !address || !sepoliaClient) return;
+    if (!canWithdraw || !address || !publicClient) return;
     setWdStep("pending"); setWdErrMsg(null); setWithdrawHash(undefined);
     try {
-      if (chainId !== 11155111) await switchChainAsync({ chainId: 11155111 });
-      const tokenAddress = SEPOLIA_STABLECOINS[withdrawToken];
+      if (chainId !== CHAIN_ID) await switchChainAsync({ chainId: CHAIN_ID });
+      const tokenAddress = STABLECOIN_ADDRESSES[withdrawToken] as `0x${string}`;
       const rawAmount    = parseUnits(withdrawNum.toString(), 6);
 
       // Pre-check vault liquidity before sending the transaction
-      const vaultBal = await sepoliaClient.readContract({
+      const vaultBal = await publicClient.readContract({
         address: MARITIME_DEPOSIT_CONTRACT, abi: MARITIME_WITHDRAW_ABI,
         functionName: "vaultBalance", args: [tokenAddress],
       });
@@ -389,7 +389,7 @@ export function Balance() {
                     <p className="text-xs text-gray-400 mt-0.5">Your balance will update shortly.</p>
                   </div>
                   {depositTxHash && (
-                    <a href={`https://sepolia.etherscan.io/tx/${depositTxHash}`} target="_blank" rel="noopener noreferrer"
+                    <a href={`${EXPLORER_URL}/tx/${depositTxHash}`} target="_blank" rel="noopener noreferrer"
                       className="text-xs font-mono text-gray-500 hover:app-fg transition-colors break-all">
                       {depositTxHash.slice(0, 10)}…{depositTxHash.slice(-8)}
                     </a>
@@ -481,7 +481,7 @@ export function Balance() {
                     <p className="text-xs text-gray-400 mt-0.5">Your balance will update shortly.</p>
                   </div>
                   {withdrawHash && (
-                    <a href={`https://sepolia.etherscan.io/tx/${withdrawHash}`} target="_blank" rel="noopener noreferrer"
+                    <a href={`${EXPLORER_URL}/tx/${withdrawHash}`} target="_blank" rel="noopener noreferrer"
                       className="text-xs font-mono text-gray-500 hover:app-fg transition-colors break-all">
                       {withdrawHash.slice(0, 10)}…{withdrawHash.slice(-8)}
                     </a>
@@ -580,7 +580,7 @@ export function Balance() {
                          : isBuy        ? <ArrowUpRight    className="w-4 h-4" />
                          :                <ArrowDownLeft   className="w-4 h-4" />;
 
-              const explorerBase = "https://sepolia.etherscan.io";
+              const explorerBase = EXPLORER_URL;
 
               return (
                 <div key={item.id} className="p-5 hover:bg-gray-800/40 transition-colors">

@@ -8,10 +8,12 @@ import { useTranslation } from "react-i18next";
 import { useWallet } from "../contexts/WalletContext";
 import {
   MARITIME_DEPOSIT_CONTRACT,
-  SEPOLIA_STABLECOINS,
+  STABLECOIN_ADDRESSES,
   ERC20_APPROVE_ABI,
   MARITIME_DEPOSIT_ABI,
   CONTRACT_ERROR_MESSAGES,
+  CHAIN_ID,
+  EXPLORER_URL,
 } from "../lib/config";
 
 const PRESETS = [50, 100, 250, 500, 1000];
@@ -41,18 +43,18 @@ export function DepositMethodModal({ onClose }: Props) {
   const { writeContractAsync } = useWriteContract();
   const chainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
-  const sepoliaClient = usePublicClient({ chainId: 11155111 });
+  const publicClient = usePublicClient({ chainId: CHAIN_ID });
 
   const handleDeposit = async () => {
-    if (!depositAmount || depositAmount < 1 || !address || !sepoliaClient) return;
+    if (!depositAmount || depositAmount < 1 || !address || !publicClient) return;
     setTxStep("approving"); setTxErrMsg(null); setSkipApprove(false);
     try {
-      if (chainId !== 11155111) await switchChainAsync({ chainId: 11155111 });
-      const tokenAddress = SEPOLIA_STABLECOINS[selectedToken];
+      if (chainId !== CHAIN_ID) await switchChainAsync({ chainId: CHAIN_ID });
+      const tokenAddress = STABLECOIN_ADDRESSES[selectedToken] as `0x${string}`;
       const rawAmount    = parseUnits(depositAmount.toString(), 6);
       const userId       = pad(address as `0x${string}`, { size: 32 });
 
-      const currentAllowance = await sepoliaClient.readContract({
+      const currentAllowance = await publicClient.readContract({
         address: tokenAddress, abi: ERC20_APPROVE_ABI,
         functionName: "allowance", args: [address as `0x${string}`, MARITIME_DEPOSIT_CONTRACT],
       });
@@ -62,7 +64,7 @@ export function DepositMethodModal({ onClose }: Props) {
           functionName: "approve", args: [MARITIME_DEPOSIT_CONTRACT, maxUint256],
           gas: 100_000n,
         });
-        await sepoliaClient.waitForTransactionReceipt({ hash: approveHash });
+        await publicClient.waitForTransactionReceipt({ hash: approveHash });
       } else {
         setSkipApprove(true);
       }
@@ -73,7 +75,7 @@ export function DepositMethodModal({ onClose }: Props) {
         functionName: "deposit", args: [tokenAddress, rawAmount, userId],
         gas: 200_000n,
       });
-      await sepoliaClient.waitForTransactionReceipt({ hash: depositHash });
+      await publicClient.waitForTransactionReceipt({ hash: depositHash });
 
       setDepositTxHash(depositHash);
       setTxStep("done");
@@ -201,7 +203,7 @@ export function DepositMethodModal({ onClose }: Props) {
             <p className="font-bold">Deposit confirmed!</p>
             <p className="text-xs text-gray-400">Your balance will update shortly.</p>
             {depositTxHash && (
-              <a href={`https://sepolia.etherscan.io/tx/${depositTxHash}`} target="_blank" rel="noopener noreferrer"
+              <a href={`${EXPLORER_URL}/tx/${depositTxHash}`} target="_blank" rel="noopener noreferrer"
                 className="text-xs font-mono text-gray-500 hover:app-fg transition-colors break-all">
                 {depositTxHash.slice(0, 10)}…{depositTxHash.slice(-8)}
               </a>
