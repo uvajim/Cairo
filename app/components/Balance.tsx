@@ -216,8 +216,8 @@ export function Balance() {
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify({ walletAddress: address }),
     })
-      .then(r => r.json())
-      .then(data => {
+      .then(async r => {
+        const data = await r.json().catch(() => ({}));
         if (cancelled) return;
         const items: FeedItem[] = (data.activity ?? []) as FeedItem[];
         feedCache.address = address;
