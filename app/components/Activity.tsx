@@ -2,42 +2,17 @@
 
 import { useEffect, useState } from 'react';
 import { ArrowUpRight, ArrowDownLeft, ArrowDownToLine, ArrowUpFromLine, Loader2, ExternalLink } from 'lucide-react';
-import { usePublicClient } from 'wagmi';
-import { formatUnits } from 'viem';
 import { useWallet } from '../contexts/WalletContext';
 import { Link } from 'react-router';
-import {
-  EQUITY_VAULT_ADDRESS,
-  EQUITY_VAULT_ABI,
-  MDT_TOKEN_CONTRACT,
-  CHAIN_ID,
-  EXPLORER_URL,
-} from '../lib/config';
-
-const ERC20_TRANSFER_EVENT = [
-  {
-    name:   'Transfer',
-    type:   'event',
-    inputs: [
-      { name: 'from',  type: 'address', indexed: true  },
-      { name: 'to',    type: 'address', indexed: true  },
-      { name: 'value', type: 'uint256', indexed: false },
-    ],
-  },
-] as const;
-
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
-
-// ~10 000 Sepolia blocks ≈ 33 hours; safe limit for most public RPC providers
-const LOOK_BACK = 10_000n;
+import { EXPLORER_URL } from '../lib/config';
 
 interface ActivityItem {
   type:        'buy' | 'sell' | 'deposit' | 'withdraw';
   ticker?:     string;
   shares?:     number;
   mdtAmount:   number;
-  txHash:      `0x${string}`;
-  blockNumber: bigint;
+  txHash:      string;
+  blockNumber: number;
   timestamp:   number;
 }
 
@@ -51,16 +26,22 @@ function relativeTime(ms: number): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+const typeConfig = {
+  buy:      { label: 'BUY',      icon: ArrowUpRight,    color: '#00c805', bgColor: 'bg-[#00c805]/10' },
+  sell:     { label: 'SELL',     icon: ArrowDownLeft,   color: '#ff5000', bgColor: 'bg-[#ff5000]/10' },
+  deposit:  { label: 'DEPOSIT',  icon: ArrowDownToLine, color: '#00c805', bgColor: 'bg-[#00c805]/10' },
+  withdraw: { label: 'WITHDRAW', icon: ArrowUpFromLine, color: '#ff5000', bgColor: 'bg-[#ff5000]/10' },
+};
+
 export function Activity() {
   const { address } = useWallet();
-  const publicClient = usePublicClient({ chainId: CHAIN_ID });
 
   const [items,   setItems]   = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
 
   useEffect(() => {
-    if (!address || !publicClient) { setItems([]); return; }
+    if (!address) { setItems([]); return; }
 
     let cancelled = false;
     setLoading(true);
@@ -68,125 +49,10 @@ export function Activity() {
 
     (async () => {
       try {
-        const latest    = await publicClient.getBlockNumber();
-        const fromBlock = latest > LOOK_BACK ? latest - LOOK_BACK : 0n;
-        const addr      = address as `0x${string}`;
-
-        const [mintLogs, burnLogs, mdtInLogs, mdtOutLogs] = await Promise.all([
-          // Shares minted to user → buy settled
-          publicClient.getContractEvents({
-            address:   EQUITY_VAULT_ADDRESS,
-            abi:       EQUITY_VAULT_ABI,
-            eventName: 'SharesMinted',
-            args:      { to: addr },
-            fromBlock,
-            toBlock:   'latest',
-          }),
-          // Shares burned from user → sell settled
-          publicClient.getContractEvents({
-            address:   EQUITY_VAULT_ADDRESS,
-            abi:       EQUITY_VAULT_ABI,
-            eventName: 'SharesBurned',
-            args:      { from: addr },
-            fromBlock,
-            toBlock:   'latest',
-          }),
-          // MDT minted to user → deposit
-          publicClient.getContractEvents({
-            address:   MDT_TOKEN_CONTRACT,
-            abi:       ERC20_TRANSFER_EVENT,
-            eventName: 'Transfer',
-            args:      { from: ZERO_ADDRESS, to: addr },
-            fromBlock,
-            toBlock:   'latest',
-          }),
-          // MDT burned from user → withdrawal
-          publicClient.getContractEvents({
-            address:   MDT_TOKEN_CONTRACT,
-            abi:       ERC20_TRANSFER_EVENT,
-            eventName: 'Transfer',
-            args:      { from: addr, to: ZERO_ADDRESS },
-            fromBlock,
-            toBlock:   'latest',
-          }),
-        ]);
-
-        if (cancelled) return;
-
-        // Trade tx hashes — used to skip MDT mint/burn events that are
-        // already represented by SharesMinted/SharesBurned
-        const tradeTxHashes = new Set([
-          ...mintLogs.map(l => l.transactionHash),
-          ...burnLogs.map(l => l.transactionHash),
-        ]);
-
-        const filteredMdtIn  = mdtInLogs .filter(l => !tradeTxHashes.has(l.transactionHash));
-        const filteredMdtOut = mdtOutLogs.filter(l => !tradeTxHashes.has(l.transactionHash));
-
-        // Fetch block timestamps for all unique blocks in one pass
-        const uniqueBlocks = new Set([
-          ...mintLogs        .map(l => l.blockNumber!),
-          ...burnLogs        .map(l => l.blockNumber!),
-          ...filteredMdtIn   .map(l => l.blockNumber!),
-          ...filteredMdtOut  .map(l => l.blockNumber!),
-        ]);
-
-        const blockTimestamps = new Map<bigint, number>();
-        await Promise.all([...uniqueBlocks].map(async (bn) => {
-          const block = await publicClient.getBlock({ blockNumber: bn });
-          blockTimestamps.set(bn, Number(block.timestamp) * 1000);
-        }));
-
-        if (cancelled) return;
-
-        const result: ActivityItem[] = [];
-
-        for (const log of mintLogs) {
-          result.push({
-            type:        'buy',
-            ticker:      log.args.ticker,
-            shares:      Number(log.args.amount) / 1_000_000,
-            mdtAmount:   0,
-            txHash:      log.transactionHash!,
-            blockNumber: log.blockNumber!,
-            timestamp:   blockTimestamps.get(log.blockNumber!) ?? 0,
-          });
-        }
-
-        for (const log of burnLogs) {
-          result.push({
-            type:        'sell',
-            ticker:      log.args.ticker,
-            shares:      Number(log.args.amount) / 1_000_000,
-            mdtAmount:   0,
-            txHash:      log.transactionHash!,
-            blockNumber: log.blockNumber!,
-            timestamp:   blockTimestamps.get(log.blockNumber!) ?? 0,
-          });
-        }
-
-        for (const log of filteredMdtIn) {
-          result.push({
-            type:        'deposit',
-            mdtAmount:   Number(formatUnits(log.args.value!, 6)),
-            txHash:      log.transactionHash!,
-            blockNumber: log.blockNumber!,
-            timestamp:   blockTimestamps.get(log.blockNumber!) ?? 0,
-          });
-        }
-
-        for (const log of filteredMdtOut) {
-          result.push({
-            type:        'withdraw',
-            mdtAmount:   Number(formatUnits(log.args.value!, 6)),
-            txHash:      log.transactionHash!,
-            blockNumber: log.blockNumber!,
-            timestamp:   blockTimestamps.get(log.blockNumber!) ?? 0,
-          });
-        }
-
-        result.sort((a, b) => Number(b.blockNumber - a.blockNumber));
-        setItems(result);
+        const res  = await fetch(`/api/activity?walletAddress=${address}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+        if (!cancelled) setItems(data.activity ?? []);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load activity.');
       } finally {
@@ -195,20 +61,13 @@ export function Activity() {
     })();
 
     return () => { cancelled = true; };
-  }, [address, publicClient]);
-
-  const typeConfig = {
-    buy:      { label: 'BUY',      icon: ArrowUpRight,       color: '#00c805', bgColor: 'bg-[#00c805]/10' },
-    sell:     { label: 'SELL',     icon: ArrowDownLeft,      color: '#ff5000', bgColor: 'bg-[#ff5000]/10' },
-    deposit:  { label: 'DEPOSIT',  icon: ArrowDownToLine,    color: '#00c805', bgColor: 'bg-[#00c805]/10' },
-    withdraw: { label: 'WITHDRAW', icon: ArrowUpFromLine,    color: '#ff5000', bgColor: 'bg-[#ff5000]/10' },
-  };
+  }, [address]);
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-8">
       <div className="mb-6">
         <h2 className="text-3xl font-bold mb-1">Activity</h2>
-        <p className="text-muted text-sm">On-chain history from the last ~33 hours</p>
+        <p className="text-muted text-sm">Full on-chain history — MDT and equity tokens</p>
       </div>
 
       {!address && (
@@ -230,7 +89,7 @@ export function Activity() {
 
       {address && !loading && !error && items.length === 0 && (
         <div className="flex flex-col items-center justify-center py-16 text-center border border-default rounded-2xl">
-          <p className="text-muted text-sm">No on-chain activity in the last ~33 hours</p>
+          <p className="text-muted text-sm">No on-chain activity found</p>
         </div>
       )}
 
@@ -280,7 +139,7 @@ export function Activity() {
                   <div className="text-right shrink-0">
                     {item.ticker && item.shares !== undefined && (
                       <p className="font-bold text-sm">
-                        {item.shares} share{item.shares !== 1 ? 's' : ''}
+                        {item.shares.toLocaleString('en-US', { maximumFractionDigits: 6 })} share{item.shares !== 1 ? 's' : ''}
                       </p>
                     )}
                     {!item.ticker && item.mdtAmount > 0 && (

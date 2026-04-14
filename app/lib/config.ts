@@ -1,15 +1,11 @@
-// Alpaca market-data proxy (snapshot, bars, search, etc.) — still routed
-// through the Next.js backend to keep API keys server-side.
-export const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "https://cairo-backend-production-67f8.up.railway.app";
-
-// Maritime Stack backend — trade offers, balances, ticker info.
-export const MARITIME_API_URL = process.env.NEXT_PUBLIC_MARITIME_API_URL ?? "https://cairo-backend-production-67f8.up.railway.app";
-export const PORTFOLIO_BALANCE_API_URL = `${MARITIME_API_URL}/api/portfolio-balance`;
+// All backend calls use relative paths so the rewrite proxy in next.config.ts
+// forwards them to Railway server-side. The Railway URL never reaches the client.
+export const PORTFOLIO_BALANCE_API_URL = "/api/portfolio-balance";
 
 // ── Railway backend routes ────────────────────────────────────────────────────
-export const ASSETS_URL    = `${BACKEND_URL}/api/holdings`;
-export const BALANCE_URL   = `${BACKEND_URL}/api/account`;
-export const ACTIVITY_URL  = `${BACKEND_URL}/api/activity`;
+export const ASSETS_URL    = "/api/holdings";
+export const BALANCE_URL   = "/api/account";
+export const ACTIVITY_URL  = "/api/activity";
 
 // ── Still on Cloud Run ────────────────────────────────────────────────────────
 export const DEPOSIT_URL  = "https://maritime-deposit-service-266596137006.us-south1.run.app";

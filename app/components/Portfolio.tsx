@@ -8,7 +8,7 @@ import { PortfolioChart } from "./PortfolioChart";
 import { Watchlist } from "./Watchlist";
 import { usePublicClient } from "wagmi";
 import { useWallet } from "../contexts/WalletContext";
-import { BACKEND_URL, EQUITY_VAULT_ADDRESS, EQUITY_VAULT_ABI, CHAIN_ID, PORTFOLIO_BALANCE_API_URL } from "../lib/config";
+import { EQUITY_VAULT_ADDRESS, EQUITY_VAULT_ABI, CHAIN_ID, PORTFOLIO_BALANCE_API_URL } from "../lib/config";
 import { DepositMethodModal } from "./DepositMethodModal";
 import { holdingsCache } from "../lib/holdingsCache";
 import { useCurrency } from "../contexts/CurrencyContext";
@@ -125,7 +125,7 @@ export function Portfolio() {
         const heldTickers = Object.keys(h);
         if (heldTickers.length === 0) return;
 
-        const snapRes  = await fetch(`${BACKEND_URL}/api/market/snapshots?symbols=${heldTickers.join(",")}`);
+        const snapRes  = await fetch(`/api/market/snapshots?symbols=${heldTickers.join(",")}`);
         const snapData = await snapRes.json();
         if (cancelled) return;
 

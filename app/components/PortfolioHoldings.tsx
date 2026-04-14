@@ -5,22 +5,25 @@ import { Link } from "react-router";
 import Image from "next/image";
 import { Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { usePublicClient } from "wagmi";
+import { usePublicClient, useWatchContractEvent } from "wagmi";
 import { useWallet } from "../contexts/WalletContext";
-import { BACKEND_URL, EQUITY_VAULT_ADDRESS, EQUITY_VAULT_ABI, CHAIN_ID } from "../lib/config";
+import { EQUITY_VAULT_ADDRESS, EQUITY_VAULT_ABI, CHAIN_ID } from "../lib/config";
 import { holdingsCache } from "../lib/holdingsCache";
 import { useCurrency } from "../contexts/CurrencyContext";
+import { usePendingTrades } from "../contexts/PendingTradesContext";
 
 function HoldingRow({
   ticker,
   qty,
   price,
   total,
+  pending,
 }: {
-  ticker: string;
-  qty: number;
-  price: number;
-  total: number;
+  ticker:   string;
+  qty:      number;
+  price:    number;
+  total:    number;
+  pending?: { side: "buy" | "sell" };
 }) {
   const { t } = useTranslation();
   const { formatPrice } = useCurrency();
@@ -52,6 +55,14 @@ function HoldingRow({
           <p className="text-xs text-gray-400">
             {t("portfolio.shares", { count: qty })}
           </p>
+          {pending && (
+            <span className={`inline-flex items-center gap-1 text-[10px] font-bold mt-0.5 ${
+              pending.side === "buy" ? "text-[#00c805]" : "text-[#ff5000]"
+            }`}>
+              <Loader2 className="w-2.5 h-2.5 animate-spin" />
+              {pending.side === "buy" ? "Buy confirming…" : "Sell confirming…"}
+            </span>
+          )}
         </div>
       </div>
       <div className="text-right">
@@ -71,11 +82,47 @@ export function PortfolioHoldings() {
   const { formatPrice } = useCurrency();
   const { address } = useWallet();
   const publicClient = usePublicClient({ chainId: CHAIN_ID });
+  const { pendingTrades, clearPendingTrade } = usePendingTrades();
 
   const cached = holdingsCache.address === address;
   const [holdings,      setHoldings]      = useState<Record<string, number>>(cached ? holdingsCache.holdings : {});
   const [holdingPrices, setHoldingPrices] = useState<Record<string, number>>(cached ? holdingsCache.prices   : {});
   const [loading,       setLoading]       = useState(!cached);
+  const [refetchKey,    setRefetchKey]    = useState(0);
+
+  useWatchContractEvent({
+    address: EQUITY_VAULT_ADDRESS,
+    abi:     EQUITY_VAULT_ABI,
+    eventName: 'SharesMinted',
+    chainId: CHAIN_ID,
+    onLogs: (logs) => {
+      for (const log of logs) {
+        if ((log.args as { to?: string }).to?.toLowerCase() === address?.toLowerCase()) {
+          clearPendingTrade((log.args as { ticker?: string }).ticker!);
+          holdingsCache.address = '';
+          setRefetchKey(k => k + 1);
+        }
+      }
+    },
+    enabled: !!address && pendingTrades.some(p => p.side === 'buy'),
+  });
+
+  useWatchContractEvent({
+    address: EQUITY_VAULT_ADDRESS,
+    abi:     EQUITY_VAULT_ABI,
+    eventName: 'SharesBurned',
+    chainId: CHAIN_ID,
+    onLogs: (logs) => {
+      for (const log of logs) {
+        if ((log.args as { from?: string }).from?.toLowerCase() === address?.toLowerCase()) {
+          clearPendingTrade((log.args as { ticker?: string }).ticker!);
+          holdingsCache.address = '';
+          setRefetchKey(k => k + 1);
+        }
+      }
+    },
+    enabled: !!address && pendingTrades.some(p => p.side === 'sell'),
+  });
 
   useEffect(() => {
     if (!address || !publicClient) { setHoldings({}); setHoldingPrices({}); return; }
@@ -137,7 +184,7 @@ export function PortfolioHoldings() {
         const heldTickers = Object.keys(h);
         if (heldTickers.length === 0) { setLoading(false); return; }
 
-        const snapRes  = await fetch(`${BACKEND_URL}/api/market/snapshots?symbols=${heldTickers.join(",")}`);
+        const snapRes  = await fetch(`/api/market/snapshots?symbols=${heldTickers.join(",")}`);
         const snapData = await snapRes.json();
         if (cancelled) return;
 
@@ -155,7 +202,7 @@ export function PortfolioHoldings() {
 
     fetchHoldings();
     return () => { cancelled = true; };
-  }, [address, publicClient]);
+  }, [address, publicClient, refetchKey]);
 
   const totalValue = Object.entries(holdings).reduce(
     (sum, [ticker, qty]) => sum + qty * (holdingPrices[ticker] ?? 0),
@@ -201,7 +248,8 @@ export function PortfolioHoldings() {
           {/* Holdings list */}
           <div className="surface-2 border border-default rounded-2xl px-6 py-2">
             {Object.entries(holdings).map(([ticker, qty]) => {
-              const price = holdingPrices[ticker] ?? 0;
+              const price   = holdingPrices[ticker] ?? 0;
+              const pending = pendingTrades.find(p => p.ticker === ticker);
               return (
                 <HoldingRow
                   key={ticker}
@@ -209,9 +257,30 @@ export function PortfolioHoldings() {
                   qty={qty}
                   price={price}
                   total={qty * price}
+                  pending={pending}
                 />
               );
             })}
+            {/* Pending buys for tickers not yet in holdings */}
+            {pendingTrades
+              .filter(p => p.side === 'buy' && !holdings[p.ticker])
+              .map(p => (
+                <div key={p.ticker} className="flex items-center justify-between py-4 border-b border-default last:border-0">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-sm font-bold">
+                      {p.ticker[0]}
+                    </div>
+                    <div>
+                      <p className="font-bold text-sm">{p.ticker}</p>
+                      <p className="text-xs text-gray-400">{p.shares.toFixed(6)} shares</p>
+                    </div>
+                  </div>
+                  <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#00c805]/15 text-[#00c805]">
+                    <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                    Confirming
+                  </span>
+                </div>
+              ))}
           </div>
         </>
       )}

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { BACKEND_URL } from "@/app/lib/config";
 
 interface DepositResult {
   address: string;
@@ -20,7 +19,7 @@ export default function DepositSection() {
     setError(null);
     setResult(null);
     try {
-      const res = await fetch(`${BACKEND_URL}/api/generate-wallet`, {
+      const res = await fetch(`/api/generate-wallet`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });

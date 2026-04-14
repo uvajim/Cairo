@@ -10,9 +10,8 @@ import { PortfolioChart } from './PortfolioChart';
 import { ArrowLeft, CheckCircle2, ExternalLink, Loader2, Newspaper, XCircle } from 'lucide-react';
 import { useWallet } from '../contexts/WalletContext';
 import { useCurrency } from '../contexts/CurrencyContext';
+import { usePendingTrades } from '../contexts/PendingTradesContext';
 import {
-  BACKEND_URL,
-  MARITIME_API_URL,
   EQUITY_VAULT_ADDRESS,
   EQUITY_VAULT_ABI,
   TRADE_EXECUTOR_ADDRESS,
@@ -75,7 +74,7 @@ function StockDetailContent({ symbol }: { symbol: string }) {
   const [amount,    setAmount]            = useState('');
 
   // Order state machine
-  type OrderStep = 'input' | 'fetching' | 'paid' | 'error';
+  type OrderStep = 'input' | 'fetching' | 'signing' | 'paid' | 'error';
 
   const [orderStep,       setOrderStep]       = useState<OrderStep>('input');
   const [orderError,      setOrderError]      = useState<string | null>(null);
@@ -87,6 +86,7 @@ function StockDetailContent({ symbol }: { symbol: string }) {
   const { open: openWcModal }      = useAppKit();
 
   const { accountBalance, refreshBalance } = useWallet();
+  const { addPendingTrade } = usePendingTrades();
   const { writeContractAsync } = useWriteContract();
 
   // Shares of this symbol held on-chain — read from EquityVault (canonical source)
@@ -144,7 +144,7 @@ function StockDetailContent({ symbol }: { symbol: string }) {
     let cancelled = false;
 
     const fetchSnapshot = () =>
-        fetch(`${BACKEND_URL}/api/market/snapshot/${symbol}`)
+        fetch(`/api/market/snapshot/${symbol}`)
             .then(r => r.json())
             .then(data => {
               if (cancelled) return;
@@ -160,7 +160,7 @@ function StockDetailContent({ symbol }: { symbol: string }) {
   }, []);
 
   useEffect(() => {
-    fetch(`${BACKEND_URL}/api/market/asset/${symbol}`)
+    fetch(`/api/market/asset/${symbol}`)
       .then(r => r.json())
       .then(data => { if (!data.error) setAsset(data); })
       .catch(() => {})
@@ -177,7 +177,7 @@ function StockDetailContent({ symbol }: { symbol: string }) {
     start.setDate(start.getDate() - daysBack);
     const startParam = start.toISOString().split('T')[0];
 
-    fetch(`${BACKEND_URL}/api/market/bars/${symbol}?timeframe=${timeframe}&start=${startParam}`)
+    fetch(`/api/market/bars/${symbol}?timeframe=${timeframe}&start=${startParam}`)
         .then(r => r.json())
         .then(data => { if (data.bars) setBars(data.bars); })
         .catch(() => {})
@@ -228,7 +228,7 @@ function StockDetailContent({ symbol }: { symbol: string }) {
     try {
       const amountRaw = String(Math.round(amountNum * 1_000_000));
 
-      const response = await fetch(`${MARITIME_API_URL}/api/trade`, {
+      const response = await fetch(`/api/trade`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ walletAddress: address, ticker: symbol, amount: amountRaw, side: orderType }),
@@ -242,6 +242,8 @@ function StockDetailContent({ symbol }: { symbol: string }) {
 
       const { params, signature } = await response.json();
       const sig = signature as `0x${string}`;
+
+      setOrderStep('signing');
 
       if (orderType === 'buy') {
         const hash = await writeContractAsync({
@@ -262,12 +264,62 @@ function StockDetailContent({ symbol }: { symbol: string }) {
         });
         setOrderId(hash);
       }
-      setConfirmedShares(Number(BigInt(params.shares)) / 1_000_000);
+      const shares = Number(BigInt(params.shares)) / 1_000_000;
+      setConfirmedShares(shares);
+      addPendingTrade(symbol, orderType, shares);
       setOrderStep('paid');
       refreshBalance();
       refetchOwnedShares();
     } catch (err) {
       setOrderError(err instanceof Error ? err.message : 'Trade failed.');
+      setOrderStep('error');
+    }
+  }
+
+  async function handleSellAll() {
+    if (!balanceRaw || (balanceRaw as bigint) <= 0n) return;
+    if (!isConnected || !address) { openWcModal({ view: 'Connect' }); return; }
+
+    setOrderStep('fetching');
+    setOrderError(null);
+
+    try {
+      const sharesRaw = String(balanceRaw as bigint);
+
+      const response = await fetch('/api/trade/sell-all', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ walletAddress: address, ticker: symbol, shares: sharesRaw }),
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        const errMsg = body?.error ?? `Request failed (${response.status})`;
+        throw new Error(typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg));
+      }
+
+      const { params, signature } = await response.json();
+      const sig = signature as `0x${string}`;
+
+      setOrderStep('signing');
+
+      const hash = await writeContractAsync({
+        address:      TRADE_EXECUTOR_ADDRESS,
+        abi:          TRADE_EXECUTOR_ABI,
+        functionName: 'executeSell',
+        args:         [{ user: params.user as `0x${string}`, ticker: params.ticker as string, shares: BigInt(params.shares), mdtPayout: BigInt(params.mdtPayout), nonce: BigInt(params.nonce), expiry: BigInt(params.expiry) }, sig],
+        chainId:      CHAIN_ID,
+      });
+
+      setOrderId(hash);
+      const soldShares = Number(balanceRaw as bigint) / 1_000_000;
+      setConfirmedShares(soldShares);
+      addPendingTrade(symbol, 'sell', soldShares);
+      setOrderStep('paid');
+      refreshBalance();
+      refetchOwnedShares();
+    } catch (err) {
+      setOrderError(err instanceof Error ? err.message : 'Sell all failed.');
       setOrderStep('error');
     }
   }
@@ -452,16 +504,7 @@ function StockDetailContent({ symbol }: { symbol: string }) {
                           <div className="surface-1 border border-default rounded-lg p-3 focus-within:border-[#00c805] transition-colors">
                             <div className="flex justify-between items-center">
                               <span className="text-xs text-gray-400 mb-1">{t('stock.amount')}</span>
-                              {orderType === 'sell' && ownedShares > 0 && price > 0 ? (
-                                <button
-                                  onClick={() => setAmount((ownedShares * price).toFixed(2))}
-                                  className="text-xs font-bold text-[#00c805] hover:text-[#00b004] transition-colors"
-                                >
-                                  {t('stock.sellAll')}
-                                </button>
-                              ) : (
-                                <span className="text-xs text-gray-500">USD</span>
-                              )}
+                              <span className="text-xs text-gray-500">USD</span>
                             </div>
                             <div className="flex items-center">
                               <span className="text-2xl font-bold text-gray-400 mr-1">$</span>
@@ -529,6 +572,14 @@ function StockDetailContent({ symbol }: { symbol: string }) {
                           >
                             {isConnected ? t('stock.reviewOrder') : t('stock.connectWallet')}
                           </button>
+                          {orderType === 'sell' && ownedShares > 0 && price > 0 && (
+                            <button
+                              onClick={handleSellAll}
+                              className="w-full mt-2 py-3.5 border border-[#ff5000] text-[#ff5000] hover:bg-[#ff5000]/10 font-bold rounded-full transition-colors text-sm"
+                            >
+                              {t('stock.sellAll')}
+                            </button>
+                          )}
                           {accountFrozen && (
                             <p className="text-xs text-[#ff5000] text-center mt-2">
                               This account is restricted.
@@ -548,13 +599,52 @@ function StockDetailContent({ symbol }: { symbol: string }) {
                       </>
                   )}
 
-                  {/* ── Executing trade ── */}
-                  {orderStep === 'fetching' && (
-                      <div className="flex flex-col items-center py-8 gap-3">
-                        <Loader2 className="w-8 h-8 text-[#00c805] animate-spin" />
-                        <p className="text-sm text-gray-400">{t('stock.executing')}</p>
+                  {/* ── Processing ── */}
+                  {(orderStep === 'fetching' || orderStep === 'signing') && (() => {
+                    const isBuy = orderType === 'buy';
+                    const steps = [
+                      {
+                        label:    'Getting quote',
+                        sub:      'Fetching live price & signing offer',
+                        done:     orderStep === 'signing',
+                        active:   orderStep === 'fetching',
+                      },
+                      {
+                        label:    `Confirm in wallet`,
+                        sub:      'Approve the transaction in MetaMask',
+                        done:     false,
+                        active:   orderStep === 'signing',
+                      },
+                    ];
+                    return (
+                      <div className="py-6 space-y-6">
+                        <div className="text-center">
+                          <p className="font-bold text-sm">{isBuy ? 'Buying' : 'Selling'} {symbol}</p>
+                          <p className="text-xs text-gray-500 mt-0.5">Do not close this window</p>
+                        </div>
+                        <div className="space-y-4">
+                          {steps.map((step, i) => (
+                            <div key={i} className="flex items-start gap-3">
+                              <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-bold mt-0.5 transition-colors ${
+                                step.done   ? 'bg-[#00c805] text-black' :
+                                step.active ? 'bg-white text-black' :
+                                              'surface-3 border border-default text-gray-500'
+                              }`}>
+                                {step.done ? '✓' : i + 1}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className={`text-sm font-semibold ${step.active || step.done ? 'app-fg' : 'text-gray-500'}`}>
+                                  {step.label}
+                                </p>
+                                <p className="text-xs text-gray-500 mt-0.5">{step.sub}</p>
+                              </div>
+                              {step.active && <Loader2 className="w-4 h-4 animate-spin text-gray-400 shrink-0 mt-1" />}
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                  )}
+                    );
+                  })()}
 
                   {/* ── Success ── */}
                   {orderStep === 'paid' && (

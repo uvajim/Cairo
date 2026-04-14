@@ -153,6 +153,43 @@ app.post('/api/trade', async (req, res) => {
   }
 });
 
+// ── POST /api/trade/sell-all ─────────────────────────────────────────────────
+// Body: { walletAddress, ticker, shares }
+// shares: exact 6-decimal share count from chain (e.g. 1.5 shares → "1500000")
+// Fetches live price, applies 3% spread, returns mdtPayout = 97% of proceeds.
+app.post('/api/trade/sell-all', async (req, res) => {
+  try {
+    const { walletAddress, ticker, shares } = req.body ?? {};
+    if (!walletAddress || !ticker || !shares) {
+      return res.status(400).json({ error: 'Missing required fields: walletAddress, ticker, shares' });
+    }
+
+    const sharesRaw = BigInt(shares);
+    if (sharesRaw <= 0n) return res.status(400).json({ error: 'shares must be positive' });
+
+    const priceUsd = await fetchPrice(ticker);
+    const priceRaw = BigInt(Math.round(priceUsd * 1_000_000));
+
+    // proceeds (6-dec) = shares_6dec * price_6dec / 1e6
+    const proceedsRaw = (sharesRaw * priceRaw) / 1_000_000n;
+
+    // Apply 3% spread — user receives 97% of gross proceeds
+    const mdtPayout = (proceedsRaw * 97n) / 100n;
+
+    const timestamp = BigInt(Math.floor(Date.now() / 1000));
+    const nonce     = nextNonce(walletAddress);
+    const expiry    = timestamp + OFFER_TTL_SECS;
+
+    const offer     = { user: walletAddress, ticker, shares: sharesRaw, mdtPayout, price: priceRaw, timestamp, nonce, expiry };
+    const signature = await signer.signTypedData(domain, SELL_TYPES, offer);
+
+    return res.json({ offer: buildOfferJson(offer), signature });
+  } catch (err) {
+    console.error(`[sell-all]`, err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Portfolio balance (time-series) ──────────────────────────────────────────
 // Mirrors the Railway backend's /api/portfolio-balance API so the frontend
 // works identically whether pointed at localhost or production.

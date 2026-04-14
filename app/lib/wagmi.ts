@@ -1,12 +1,14 @@
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi';
 import { createAppKit } from '@reown/appkit/react';
-import { mainnet, type AppKitNetwork } from '@reown/appkit/networks';
+import { mainnet, sepolia, type AppKitNetwork } from '@reown/appkit/networks';
 
 // Get a free Project ID at https://cloud.reown.com
 export const projectId =
   process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? '3b6b3f3b9f3b3f3b9f3b3f3b9f3b3f3b';
 
-const networks: [AppKitNetwork, ...AppKitNetwork[]] = [mainnet];
+// Both networks registered so wagmi can connect to whichever CHAIN_ID points to.
+// Production sets NEXT_PUBLIC_CHAIN_ID=1 (mainnet); local dev uses 11155111 (Sepolia).
+const networks: [AppKitNetwork, ...AppKitNetwork[]] = [mainnet, sepolia];
 
 export const wagmiAdapter = new WagmiAdapter({ networks, projectId });
 

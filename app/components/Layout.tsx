@@ -5,7 +5,6 @@ import { Globe, Search, CircleDollarSign, LayoutDashboard, PieChart, Smartphone,
 import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useWallet } from "../contexts/WalletContext";
-import { BACKEND_URL } from "../lib/config";
 import "../lib/i18n";
 import { LANGUAGES } from "../lib/i18n";
 import { useCurrency, CURRENCIES } from "../contexts/CurrencyContext";
@@ -107,7 +106,7 @@ export function Layout() {
     if (!q) { setSuggestions([]); setShowDrop(false); return; }
     const timer = setTimeout(async () => {
       try {
-        const res  = await fetch(`${BACKEND_URL}/api/market/search?q=${encodeURIComponent(q)}`);
+        const res  = await fetch(`/api/market/search?q=${encodeURIComponent(q)}`);
         const data = await res.json();
         setSuggestions(data.results ?? []);
         setShowDrop(true);

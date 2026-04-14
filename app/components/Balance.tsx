@@ -26,22 +26,21 @@ const TOKEN_LOGOS: Record<"USDC" | "USDT", string> = {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface FeedItem {
-  id: string;
-  kind: "deposit" | "withdrawal" | "buy" | "sell";
-  ticker?: string;
-  shares?: number;
-  token?: "USDC" | "USDT";
-  amount: number;
-  txHash?: string;
-  createdAt: string;
+  type:        "deposit" | "withdraw" | "buy" | "sell";
+  ticker?:     string;
+  shares?:     number;
+  mdtAmount:   number;
+  txHash:      string;
+  blockNumber: number;
+  timestamp:   number; // ms
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const feedCache: { address: string; items: FeedItem[] } = { address: "", items: [] };
 
-function relativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
+function relativeTime(ms: number): string {
+  const diff = Date.now() - ms;
   const mins = Math.floor(diff / 60_000);
   if (mins < 1)  return "just now";
   if (mins < 60) return `${mins}m ago`;
@@ -220,7 +219,7 @@ export function Balance() {
       .then(r => r.json())
       .then(data => {
         if (cancelled) return;
-        const items: FeedItem[] = data.activity ?? [];
+        const items: FeedItem[] = (data.activity ?? []) as FeedItem[];
         feedCache.address = address;
         feedCache.items   = items;
         setFeedItems(items);
@@ -564,26 +563,24 @@ export function Balance() {
         {feedItems.length > 0 && (
           <div className="surface-3 border border-default rounded-2xl overflow-hidden divide-y divide-gray-800">
             {feedItems.map(item => {
-              const isDeposit    = item.kind === "deposit";
-              const isWithdrawal = item.kind === "withdrawal";
-              const isBuy        = item.kind === "buy";
-              const isSell       = item.kind === "sell";
+              const isDeposit    = item.type === "deposit";
+              const isWithdrawal = item.type === "withdraw";
+              const isBuy        = item.type === "buy";
+              const isSell       = item.type === "sell";
               const isCash       = isDeposit || isWithdrawal;
 
-              const iconBg = isDeposit ? "bg-[#00c805]/10 text-[#00c805]"
+              const iconBg = isDeposit    ? "bg-[#00c805]/10 text-[#00c805]"
                            : isWithdrawal ? "bg-[#ff5000]/10 text-[#ff5000]"
-                           : isBuy  ? "bg-[#00c805]/10 text-[#00c805]"
-                           :          "bg-[#ff5000]/10 text-[#ff5000]";
+                           : isBuy        ? "bg-[#00c805]/10 text-[#00c805]"
+                           :               "bg-[#ff5000]/10 text-[#ff5000]";
 
               const icon = isDeposit    ? <ArrowDownCircle className="w-4 h-4" />
                          : isWithdrawal ? <ArrowUpCircle   className="w-4 h-4" />
                          : isBuy        ? <ArrowUpRight    className="w-4 h-4" />
                          :                <ArrowDownLeft   className="w-4 h-4" />;
 
-              const explorerBase = EXPLORER_URL;
-
               return (
-                <div key={item.id} className="p-5 hover:bg-gray-800/40 transition-colors">
+                <div key={item.txHash + item.type} className="p-5 hover:bg-gray-800/40 transition-colors">
                   <div className="flex items-center gap-4">
 
                     {/* Icon */}
@@ -595,17 +592,9 @@ export function Balance() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         {isCash ? (
-                          <div className="flex items-center gap-1.5">
-                            {item.token && (
-                              <img src={TOKEN_LOGOS[item.token]} alt={item.token} className="w-4 h-4 rounded-full" />
-                            )}
-                            <span className="font-bold text-sm">
-                              {isDeposit ? "Deposit" : "Withdrawal"}
-                            </span>
-                            {item.token && (
-                              <span className="text-xs text-gray-400">{item.token}</span>
-                            )}
-                          </div>
+                          <span className="font-bold text-sm">
+                            {isDeposit ? "Deposit" : "Withdrawal"}
+                          </span>
                         ) : (
                           <>
                             {item.ticker
@@ -618,31 +607,30 @@ export function Balance() {
                           </>
                         )}
                       </div>
-                      {item.txHash && (
-                        <a href={`${explorerBase}/tx/${item.txHash}`} target="_blank" rel="noopener noreferrer"
-                          className="text-xs font-mono text-gray-500 hover:app-fg transition-colors">
-                          {item.txHash.slice(0, 8)}…{item.txHash.slice(-6)}
-                        </a>
-                      )}
+                      <a href={`${EXPLORER_URL}/tx/${item.txHash}`} target="_blank" rel="noopener noreferrer"
+                        className="text-xs font-mono text-gray-500 hover:app-fg transition-colors">
+                        {item.txHash.slice(0, 8)}…{item.txHash.slice(-6)}
+                      </a>
                     </div>
 
                     {/* Amount + time */}
                     <div className="text-right shrink-0">
                       {isCash ? (
                         <p className={`font-bold text-sm ${isDeposit ? "text-[#00c805]" : "text-[#ff5000]"}`}>
-                          {isDeposit ? "+" : "−"}{formatPrice(item.amount)}
+                          {isDeposit ? "+" : "−"}{item.mdtAmount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MDT
                         </p>
                       ) : (
                         <>
                           <p className={`font-bold text-sm ${isBuy ? "text-[#ff5000]" : "text-[#00c805]"}`}>
-                            {isBuy ? "−" : "+"}{item.amount > 0 ? formatPrice(item.amount) : "—"}
-                          </p>
-                          <p className="text-xs text-gray-400">
-                            {item.shares != null ? t("balance.shares", { count: item.shares }) : ""}
+                            {item.shares != null
+                              ? `${isBuy ? "−" : "+"}${item.shares.toLocaleString("en-US", { maximumFractionDigits: 6 })} shares`
+                              : "—"}
                           </p>
                         </>
                       )}
-                      <p className="text-xs text-gray-500 mt-0.5">{relativeTime(item.createdAt)}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {item.timestamp ? relativeTime(item.timestamp) : `#${item.blockNumber}`}
+                      </p>
                     </div>
 
                   </div>

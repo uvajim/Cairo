@@ -16,7 +16,7 @@
     "firebase": "^12.9.0",
     "i18next": "^25.8.13",
     "lucide-react": "^0.575.0",
-    "next": "16.1.6",
+    "next": "16.1.7",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-i18next": "^16.5.4",
@@ -25,13 +25,18 @@
     "viem": "^2.46.2",
     "wagmi": "^3.5.0"
   },
+  "overrides": {
+    "h3": "1.15.9",
+    "es-toolkit": "1.45.1",
+    "pino": "10.1.1"
+  },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.1.6",
+    "eslint-config-next": "16.1.7",
     "tailwindcss": "^4.2.1",
     "typescript": "^5"
   }

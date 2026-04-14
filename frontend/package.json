@@ -21,5 +21,15 @@
     "react-native-modal": "^14.0.0-rc.1",
     "react-native-svg": "15.12.1"
   },
-  "private": true
+  "private": true,
+  "overrides": {
+    "undici": "7.24.1",
+    "h3": "1.15.9",
+    "node-forge": "1.4.0",
+    "@xmldom/xmldom": "0.8.12",
+    "picomatch@2": "2.3.2",
+    "picomatch@3": "3.0.2",
+    "picomatch@4": "4.0.4",
+    "pino": "10.1.1"
+  }
 }

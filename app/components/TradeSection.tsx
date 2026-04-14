@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { BACKEND_URL } from "@/app/lib/config";
 
 interface TradeOrder {
   id: string;
@@ -24,7 +23,7 @@ export default function TradeSection() {
     setError(null);
     setOrder(null);
     try {
-      const res = await fetch(`${BACKEND_URL}/api/trade`, {
+      const res = await fetch(`/api/trade`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbol: "BTC/USD", amount: 0.001, side: "buy" }),

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { BACKEND_URL } from "../lib/config";
 
 export interface Quote {
   price: number;
@@ -26,7 +25,7 @@ export function useSnapshots(
 
     const load = async () => {
       try {
-        const res  = await fetch(`${BACKEND_URL}/api/market/snapshots?symbols=${encodeURIComponent(key)}`);
+        const res  = await fetch(`/api/market/snapshots?symbols=${encodeURIComponent(key)}`);
         const data = await res.json();
         if (!cancelled && !data.error) setQuotes(data);
       } catch {}
@@ -57,7 +56,7 @@ export function useCryptoQuotes(
 
     const load = async () => {
       try {
-        const res  = await fetch(`${BACKEND_URL}/api/market/crypto?ids=${encodeURIComponent(key)}`);
+        const res  = await fetch(`/api/market/crypto?ids=${encodeURIComponent(key)}`);
         const data = await res.json();
         if (!cancelled && !data.error) setQuotes(data);
       } catch {}
