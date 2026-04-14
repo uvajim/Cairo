@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Wallet, Loader2, ArrowDownToLine } from "lucide-react";
 import { useWriteContract, useChainId, useSwitchChain, usePublicClient } from "wagmi";
-import { parseUnits, pad, maxUint256 } from "viem";
+import { parseUnits, pad } from "viem";
 import { useTranslation } from "react-i18next";
 import { useWallet } from "../contexts/WalletContext";
 import {
@@ -61,7 +61,7 @@ export function DepositMethodModal({ onClose }: Props) {
       if (currentAllowance < rawAmount) {
         const approveHash = await writeContractAsync({
           address: tokenAddress, abi: ERC20_APPROVE_ABI,
-          functionName: "approve", args: [MARITIME_DEPOSIT_CONTRACT, maxUint256],
+          functionName: "approve", args: [MARITIME_DEPOSIT_CONTRACT, rawAmount],
           gas: 100_000n,
         });
         await publicClient.waitForTransactionReceipt({ hash: approveHash });

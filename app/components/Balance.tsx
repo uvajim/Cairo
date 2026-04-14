@@ -8,7 +8,7 @@ import {
 import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
 import { useWriteContract, useWaitForTransactionReceipt, useChainId, useSwitchChain, usePublicClient } from "wagmi";
-import { parseUnits, pad, maxUint256 } from "viem";
+import { parseUnits, pad } from "viem";
 import { useWallet } from "../contexts/WalletContext";
 import { useCurrency } from "../contexts/CurrencyContext";
 import {
@@ -105,7 +105,7 @@ export function Balance() {
       if (currentAllowance < rawAmount) {
         const approveHash = await writeContractAsync({
           address: tokenAddress, abi: ERC20_APPROVE_ABI,
-          functionName: "approve", args: [MARITIME_DEPOSIT_CONTRACT, maxUint256],
+          functionName: "approve", args: [MARITIME_DEPOSIT_CONTRACT, rawAmount],
           gas: 100_000n,
         });
         await publicClient.waitForTransactionReceipt({ hash: approveHash });
