@@ -561,7 +561,7 @@ export function Balance() {
         )}
 
         {feedItems.length > 0 && (
-          <div className="surface-3 border border-default rounded-2xl overflow-hidden divide-y divide-gray-800">
+          <div className="surface-3 border border-default rounded-2xl overflow-hidden divide-y divide-gray-800 [&>*:first-child]:border-t-0">
             {feedItems.map(item => {
               const isDeposit    = item.type === "deposit";
               const isWithdrawal = item.type === "withdraw";
