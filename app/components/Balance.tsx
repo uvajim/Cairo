@@ -621,9 +621,9 @@ export function Balance() {
                         </p>
                       ) : (
                         <>
-                          <p className={`font-bold text-sm ${isBuy ? "text-[#ff5000]" : "text-[#00c805]"}`}>
+                          <p className={`font-bold text-sm ${isBuy ? "text-[#00c805]" : "text-[#ff5000]"}`}>
                             {item.shares != null
-                              ? `${isBuy ? "−" : "+"}${item.shares.toLocaleString("en-US", { maximumFractionDigits: 6 })} shares`
+                              ? `${isBuy ? "+" : "−"}${item.shares.toLocaleString("en-US", { maximumFractionDigits: 6 })} shares`
                               : "—"}
                           </p>
                         </>
