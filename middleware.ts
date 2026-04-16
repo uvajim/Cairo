@@ -130,6 +130,16 @@ const GEO_BYPASS_COOKIE = "geo_bypass";
 
 export function middleware(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl;
+  const host = request.headers.get("host") ?? "";
+
+  // banking.maritime.com — skip geo-block entirely; rewrite to /banking/*
+  if (host.startsWith("banking.")) {
+    const url = request.nextUrl.clone();
+    if (!url.pathname.startsWith("/banking")) {
+      url.pathname = `/banking${url.pathname === "/" ? "" : url.pathname}`;
+    }
+    return withFavicon(NextResponse.rewrite(url));
+  }
 
   // If a valid geo_unlock param is present, pass through immediately so the
   // page loads and client-side JS can set the bypass cookie.
