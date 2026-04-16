@@ -337,10 +337,17 @@ function AddAccountForm({
 
 // ── Create Bridge customer profile ───────────────────────────────────────────
 
+const EMPTY_PROFILE = {
+  firstName: "", lastName: "", email: "", birthDate: "",
+  street: "", streetLine2: "", city: "", subdivision: "", postalCode: "",
+  ssn: "", signedAgreementId: "",
+};
+
 function CreateProfileForm({ onSuccess }: { onSuccess: (customerId: string) => void }) {
-  const [form, setForm] = useState({ firstName: "", lastName: "", email: "", dob: "" });
-  const [error, setError]   = useState("");
+  const [form,    setForm]    = useState(EMPTY_PROFILE);
+  const [error,   setError]   = useState("");
   const [loading, setLoading] = useState(false);
+
   const set = (f: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(prev => ({ ...prev, [f]: e.target.value }));
 
@@ -350,13 +357,13 @@ function CreateProfileForm({ onSuccess }: { onSuccess: (customerId: string) => v
     setLoading(true);
     try {
       const res = await fetch("/api/bridge/customers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method:      "POST",
+        headers:     { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify(form),
+        body:        JSON.stringify({ ...form, country: "USA" }),
       });
       const data = await res.json().catch(() => null);
-      if (!res.ok) { setError(data?.error ?? "Failed to create profile"); return; }
+      if (!res.ok) { setError(data?.error ?? "Verification failed — check your information and try again"); return; }
       onSuccess(data.customerId);
     } catch { setError("Network error — please try again"); }
     finally  { setLoading(false); }
@@ -364,26 +371,68 @@ function CreateProfileForm({ onSuccess }: { onSuccess: (customerId: string) => v
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      <p className="text-sm text-muted leading-relaxed">
+        To link a bank account, we need to verify your identity with our banking partner.
+        Your information is transmitted securely and never stored on our servers.
+      </p>
+
+      {/* Personal */}
       <div>
-        <p className="text-sm text-muted mb-4 leading-relaxed">
-          To link a bank account we need to verify your identity with our banking partner.
-        </p>
         <p className="text-xs text-muted uppercase tracking-widest mb-3">Personal info</p>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <input placeholder="First name" value={form.firstName} onChange={set("firstName")} required className={input()} />
-            <input placeholder="Last name"  value={form.lastName}  onChange={set("lastName")}  required className={input()} />
+            <input placeholder="First name"    value={form.firstName} onChange={set("firstName")} required className={input()} />
+            <input placeholder="Last name"     value={form.lastName}  onChange={set("lastName")}  required className={input()} />
           </div>
-          <input type="email" placeholder="Email address" value={form.email} onChange={set("email")} required className={input()} />
-          <input type="date"  placeholder="Date of birth" value={form.dob}   onChange={set("dob")}   required className={input()} />
+          <input type="email" placeholder="Email address" value={form.email}     onChange={set("email")}     required className={input()} />
+          <input type="date"  placeholder="Date of birth" value={form.birthDate} onChange={set("birthDate")} required className={input()} />
         </div>
       </div>
+
+      {/* Address */}
+      <div>
+        <p className="text-xs text-muted uppercase tracking-widest mb-3">Residential address</p>
+        <div className="space-y-3">
+          <input placeholder="Street address"      value={form.street}      onChange={set("street")}      required className={input()} />
+          <input placeholder="Apt / Suite (optional)" value={form.streetLine2} onChange={set("streetLine2")}         className={input()} />
+          <input placeholder="City"                value={form.city}        onChange={set("city")}        required className={input()} />
+          <div className="grid grid-cols-2 gap-3">
+            <input placeholder="State (e.g. NY)"   value={form.subdivision} onChange={set("subdivision")} required className={input()} />
+            <input placeholder="ZIP code"           value={form.postalCode}  onChange={set("postalCode")}  required className={input()} />
+          </div>
+        </div>
+      </div>
+
+      {/* ID */}
+      <div>
+        <p className="text-xs text-muted uppercase tracking-widest mb-3">Identity verification</p>
+        <div className="space-y-3">
+          <input
+            placeholder="Social Security Number (xxx-xx-xxxx)"
+            value={form.ssn}
+            onChange={set("ssn")}
+            required
+            pattern="\d{3}-\d{2}-\d{4}"
+            autoComplete="off"
+            className={input()}
+          />
+          <input
+            placeholder="Signed Agreement ID (from Bridge ToS)"
+            value={form.signedAgreementId}
+            onChange={set("signedAgreementId")}
+            required
+            className={input()}
+          />
+        </div>
+      </div>
+
       {error && <p className="text-xs text-[#ff5000] text-center">{error}</p>}
+
       <button type="submit" disabled={loading}
         className="w-full bg-white text-black text-sm font-bold py-3 rounded-xl hover:bg-gray-200 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
       >
         {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-        Continue
+        Verify identity
       </button>
     </form>
   );
