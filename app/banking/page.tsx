@@ -482,8 +482,6 @@ function BankingDashboard({ user: initialUser, onLogout, onBack }: { user: User;
         <div className="flex justify-center py-16">
           <Loader2 className="w-6 h-6 animate-spin text-muted" />
         </div>
-      ) : !customerId ? (
-        <CreateProfileForm onSuccess={id => { setCustomerId(id); setLoading(true); }} />
       ) : showForm ? (
         <AddAccountForm
           customerId={customerId}
@@ -589,16 +587,19 @@ function LoginForm({ onSuccess, onRegister }: { onSuccess: (user: User) => void;
   );
 }
 
-// ── Register form ─────────────────────────────────────────────────────────────
+// ── Register form (two steps: credentials → KYC) ─────────────────────────────
 
-function RegisterForm({ onSuccess, onBack }: { onSuccess: () => void; onBack: () => void }) {
-  const [name, setName]         = useState("");
-  const [email, setEmail]       = useState("");
+type RegisterStep = "credentials" | "kyc";
+
+function RegisterForm({ onSuccess, onBack }: { onSuccess: (user: User) => void; onBack: () => void }) {
+  const [step,     setStep]     = useState<RegisterStep>("credentials");
+  const [name,     setName]     = useState("");
+  const [email,    setEmail]    = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError]       = useState("");
-  const [loading, setLoading]   = useState(false);
+  const [error,    setError]    = useState("");
+  const [loading,  setLoading]  = useState(false);
 
-  const handleRegister = async (e: React.FormEvent) => {
+  const handleCredentials = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
@@ -608,14 +609,39 @@ function RegisterForm({ onSuccess, onBack }: { onSuccess: () => void; onBack: ()
         body: JSON.stringify({ email, password, name }),
       });
       const data = await res.json().catch(() => null);
-      if (!res.ok) setError(data?.error ?? "Registration failed");
-      else         onSuccess();
+      if (!res.ok) { setError(data?.error ?? "Registration failed"); return; }
+      // Now log in to get a session, then advance to KYC step
+      const loginRes  = await fetch("/api/banking/auth/login", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        credentials: "include", body: JSON.stringify({ email, password }),
+      });
+      const loginData = await loginRes.json().catch(() => null);
+      if (!loginRes.ok) { setError(loginData?.error ?? "Login after registration failed"); return; }
+      setStep("kyc");
     } catch {
       setError("Network error — please try again");
     } finally {
       setLoading(false);
     }
   };
+
+  if (step === "kyc") {
+    return (
+      <div className="min-h-screen app-bg app-fg font-sans px-6 py-12">
+        <div className="max-w-lg mx-auto">
+          <div className="flex items-center gap-3 mb-10">
+            <img src="/maritime.png" alt="Maritime" className="w-8 h-8 object-contain" />
+            <span className="text-base font-bold tracking-tight">Verify identity</span>
+          </div>
+          <CreateProfileForm
+            onSuccess={customerId =>
+              onSuccess({ email, name, customerId })
+            }
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen app-bg app-fg font-sans flex flex-col items-center justify-center px-6 py-16">
@@ -624,7 +650,7 @@ function RegisterForm({ onSuccess, onBack }: { onSuccess: () => void; onBack: ()
           <img src="/maritime.png" alt="Maritime" className="w-14 h-14 object-contain mb-4" />
           <span className="text-xl font-bold tracking-tight">Create account</span>
         </div>
-        <form onSubmit={handleRegister} className="space-y-3">
+        <form onSubmit={handleCredentials} className="space-y-3">
           <input type="text"     value={name}     onChange={e => setName(e.target.value)}     placeholder="Full name"       autoFocus className={input()} />
           <input type="email"    value={email}    onChange={e => setEmail(e.target.value)}    placeholder="Email address"   required  className={input()} />
           <input type="password" value={password} onChange={e => { setPassword(e.target.value); setError(""); }} placeholder="Password" required className={input(!!error)} />
@@ -633,7 +659,7 @@ function RegisterForm({ onSuccess, onBack }: { onSuccess: () => void; onBack: ()
             className="w-full bg-white text-black text-sm font-bold py-3 rounded-xl hover:bg-gray-200 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
           >
             {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-            Create account
+            Continue
           </button>
           <p className="text-center text-xs text-muted pt-1">
             Already have an account?{" "}
@@ -688,7 +714,7 @@ export default function BankingPage() {
   }
 
   if (view === "register") {
-    return <RegisterForm onBack={() => setView("login")} onSuccess={() => setView("login")} />;
+    return <RegisterForm onBack={() => setView("login")} onSuccess={u => { setUser(u); setView("login"); }} />;
   }
 
   return <LoginForm onSuccess={u => setUser(u)} onRegister={() => setView("register")} />;
